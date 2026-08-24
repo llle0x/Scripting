@@ -1,4 +1,4 @@
-import { AppEvents, Navigation, NavigationStack, Script, type ScenePhase } from "scripting"
+import { AppEvents, Navigation, NavigationStack, Path, Script, type ScenePhase } from "scripting"
 import { share } from "./class/share"
 import { ChatPage } from "./page"
 import { TransferActivityController } from "./activity"
@@ -9,6 +9,42 @@ export function runChat(initialFiles?: string[]) {
   const main = async () => {
     if (!share.ip) throw new Error("当前不处于局域网")
     await share.start()
+    share.markClipboardHandled(await Pasteboard.changeCount)
+    let checkingClipboard = false
+    const sendChangedClipboard = async () => {
+      if (checkingClipboard) return
+      checkingClipboard = true
+      try {
+        const changeCount = await Pasteboard.changeCount
+        if (!share.autoSendClipboardOnForeground) {
+          share.markClipboardHandled(changeCount)
+          return
+        }
+        if (changeCount === share.clipboardChangeCount) return
+        // 先标记，避免 onResume 与 active 同时触发造成重复发送。
+        share.markClipboardHandled(changeCount)
+        if (await Pasteboard.hasImages) {
+          const images = await Pasteboard.getImages()
+          const paths: string[] = []
+          for (const image of images ?? []) {
+            const data = image.toPNGData()
+            if (!data) continue
+            const path = Path.join(FileManager.temporaryDirectory, `剪贴板图片-${Date.now()}-${paths.length + 1}.png`)
+            FileManager.writeAsDataSync(path, data)
+            paths.push(path)
+          }
+          if (paths.length > 0) await share.sendPastedFiles(paths)
+          return
+        }
+        const text = await Pasteboard.getString()
+        const value = text?.slice(0, 100_000).trim()
+        if (value) share.sendPastedText(value)
+      } catch (error) {
+        console.warn(`剪贴板前台同步失败：${String(error)}`)
+      } finally {
+        checkingClipboard = false
+      }
+    }
     const claimQueuedFiles = () => share.queueFiles(claimSharedFiles())
     share.queueFiles(initialFiles ?? [])
     claimQueuedFiles()
@@ -25,6 +61,7 @@ export function runChat(initialFiles?: string[]) {
     const removeResumeListener = Script.onResume(() => {
       claimQueuedFiles()
       syncActivityForeground()
+      void sendChangedClipboard()
       // 共享 Storage 的持久化是异步的，再补查一次避免刚唤醒时尚未落盘。
       setTimeout(claimQueuedFiles, 500)
     })
@@ -50,6 +87,7 @@ export function runChat(initialFiles?: string[]) {
       } else if (phase === "active") {
         syncActivityForeground()
         void syncKeepAlive(false)
+        void sendChangedClipboard()
       }
     }
     AppEvents.scenePhase.addListener(onScenePhase)

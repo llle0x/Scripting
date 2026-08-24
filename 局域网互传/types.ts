@@ -46,7 +46,6 @@ export type IncomingPacket =
 export type Broadcast =
   | { type: "status"; peer: Peer; online: boolean }
   | { role: "app"; type: "text"; text: string; id: string; ts: number }
-  | { role: "browser"; type: "clipboard"; text: string; id: string; ts: number; deviceName?: string }
   | { role: "app"; type: "file"; fileName: string; fileSize: number; mime?: string; url: string; id: string; ts: number }
 
 /** App 端注入页面的本地事件 */

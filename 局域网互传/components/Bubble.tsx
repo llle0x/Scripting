@@ -32,6 +32,12 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 ** (index + 1)).toFixed(bytes >= 1024 ** (index + 2) ? 1 : 0)} ${units[index]}`
 }
 
+function formatTime(timestamp: number): string {
+  const date = new Date(timestamp)
+  const pad = (value: number) => String(value).padStart(2, "0")
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
 function firstHttpURL(text: string): string | null {
   const match = text.match(/https?:\/\/[^\s<>'"]+/i)
   if (!match) return null
@@ -67,9 +73,9 @@ function ImageBubble({ message, mine }: { message: ChatMessage; mine: boolean })
         {message.fileName ?? "图片"} · {formatSize(message.fileSize ?? 0)}
       </Text>
       <HStack spacing={8}>
-        <Button title="预览" systemImage="eye" action={() => path && previewImage(path)} />
-        <Button title="复制" systemImage="doc.on.doc" action={() => path && copyImage(path)} />
-        <Button title="分享" systemImage="square.and.arrow.up" action={() => path && ShareSheet.present([path])} />
+        <Button title="预览" systemImage="eye" tint={mine ? "white" : "systemBlue"} action={() => path && previewImage(path)} />
+        <Button title="复制" systemImage="doc.on.doc" tint={mine ? "white" : "systemBlue"} action={() => path && copyImage(path)} />
+        <Button title="分享" systemImage="square.and.arrow.up" tint={mine ? "white" : "systemBlue"} action={() => path && ShareSheet.present([path])} />
       </HStack>
     </VStack>
   )
@@ -95,9 +101,9 @@ function FileBubble({ message, mine }: { message: ChatMessage; mine: boolean }) 
         </HStack>
       </Button>
       <HStack spacing={8}>
-        <Button title="预览" systemImage="eye" action={() => path && QuickLook.previewURLs([path], true)} />
-        <Button title="打开" systemImage="arrow.up.forward.app" action={() => path && DocumentInteraction.optionsMenu(path)} />
-        <Button title="分享" systemImage="square.and.arrow.up" action={() => path && ShareSheet.present([path])} />
+        <Button title="预览" systemImage="eye" tint={mine ? "white" : "systemBlue"} action={() => path && QuickLook.previewURLs([path], true)} />
+        <Button title="打开" systemImage="arrow.up.forward.app" tint={mine ? "white" : "systemBlue"} action={() => path && DocumentInteraction.optionsMenu(path)} />
+        <Button title="分享" systemImage="square.and.arrow.up" tint={mine ? "white" : "systemBlue"} action={() => path && ShareSheet.present([path])} />
       </HStack>
     </VStack>
   )
@@ -115,8 +121,8 @@ function TextBubble({ text, mine }: { text: string; mine: boolean }) {
         {text}
       </Text>
       <HStack spacing={8}>
-        <Button title="复制" systemImage="doc.on.doc" action={() => Pasteboard.setString(text)} />
-        {url ? <Button title="打开" systemImage="safari" action={() => Safari.present(url, true)} /> : null}
+        <Button title="复制" systemImage="doc.on.doc" tint={mine ? "white" : "systemBlue"} action={() => Pasteboard.setString(text)} />
+        {url ? <Button title="打开" systemImage="safari" tint={mine ? "white" : "systemBlue"} action={() => Safari.present(url, true)} /> : null}
       </HStack>
     </VStack>
   )
@@ -133,7 +139,7 @@ export function Bubble({ message }: { message: ChatMessage }) {
           foregroundStyle="secondaryLabel"
           padding={{ horizontal: 12, vertical: 6 }}
           background={{ style: { light: "#f2f2f7", dark: "#1c1c1e" }, shape: "capsule" }}>
-          {message.text ?? ""}
+          {`${message.text ?? ""} · ${formatTime(message.ts)}`}
         </Text>
         <Spacer />
       </HStack>
@@ -156,9 +162,9 @@ export function Bubble({ message }: { message: ChatMessage }) {
     <HStack frame={{ maxWidth: Infinity }}>
       {mine ? spacer : null}
       <VStack alignment={mine ? "trailing" : "leading"} spacing={4}>
-        {!mine && (message.deviceName || message.address) ? (
+        {!mine ? (
           <Text font={11} foregroundStyle="secondaryLabel" padding={{ horizontal: 4 }}>
-            {[message.deviceName, message.address].filter(Boolean).join(" · ")}
+            {[message.deviceName, message.address, formatTime(message.ts)].filter(Boolean).join(" · ")}
           </Text>
         ) : null}
         {content}

@@ -53,7 +53,10 @@ export function chatPageHtml(): string {
   footer input[type="text"]{ flex:1; font-size:16px; padding:10px 14px; border-radius:18px; border:1px solid var(--line); background:transparent; color:var(--text); outline:none }
   footer button{ border:none; background:var(--accent); color:#fff; padding:10px 16px; border-radius:18px; font-size:15px; font-weight:600 }
   footer .icon{ background:transparent; color:var(--accent); padding:8px 10px; font-size:24px; line-height:1 }
+  footer .clipboard-icon{ width:28px; height:28px; display:block; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round }
   footer button:active{ opacity:.7 }
+  .clipboard-hint{ position:fixed; left:50%; bottom:calc(76px + env(safe-area-inset-bottom)); z-index:9; max-width:calc(100% - 32px); padding:8px 14px; border:1px solid var(--line); border-radius:14px; background:var(--card); color:var(--text); box-shadow:0 5px 20px rgba(0,0,0,.14); backdrop-filter:blur(18px) saturate(140%); -webkit-backdrop-filter:blur(18px) saturate(140%); font-size:13px; text-align:center; white-space:nowrap; opacity:0; transform:translate(-50%,8px); transition:opacity .18s ease,transform .18s ease; pointer-events:none }
+  .clipboard-hint.show{ opacity:1; transform:translate(-50%,0) }
   .pair-gate{ position:fixed; inset:0; z-index:10; display:flex; align-items:center; justify-content:center; padding:24px; background:var(--bg) }
   .pair-card{ width:min(100%,360px); padding:26px 22px; border:1px solid var(--line); border-radius:24px; background:var(--card); box-shadow:0 16px 48px rgba(0,0,0,.12); text-align:center }
   .pair-icon{ font-size:42px; margin-bottom:10px }
@@ -76,7 +79,7 @@ export function chatPageHtml(): string {
     <h1>与设备配对</h1>
     <p>请输入 Scripting 设备上显示的 6 位配对码</p>
     <input id="pairInput" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" aria-label="6 位配对码">
-    <label class="remember"><input id="rememberInput" type="checkbox" checked> 信任此浏览器，下次自动连接</label>
+    <label class="remember"><input id="rememberInput" type="checkbox"> 信任此浏览器，下次自动连接</label>
     <button id="pairBtn" type="submit">配对</button>
     <div id="pairError" class="pair-error" role="alert"></div>
   </form>
@@ -86,8 +89,10 @@ export function chatPageHtml(): string {
   <div id="status" class="status off">● 等待配对…</div>
 </header>
 <main id="messages"></main>
+<div id="clipboardHint" class="clipboard-hint" role="status" aria-live="polite"></div>
 <footer>
   <button id="attachBtn" class="icon">+</button>
+  <button id="syncClipboardBtn" class="icon" type="button" title="粘贴剪贴板" aria-label="粘贴剪贴板"><svg class="clipboard-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.5H6.8A1.8 1.8 0 0 0 5 8.3v10.9A1.8 1.8 0 0 0 6.8 21h7.9a1.8 1.8 0 0 0 1.8-1.8v-1.7"/><path d="M11 3h6.2A1.8 1.8 0 0 1 19 4.8v9.4a1.8 1.8 0 0 1-1.8 1.8H11a1.8 1.8 0 0 1-1.8-1.8V4.8A1.8 1.8 0 0 1 11 3Z"/><path d="M12.2 3V2.6c0-.9.7-1.6 1.6-1.6h.7c.9 0 1.6.7 1.6 1.6V3"/></svg></button>
   <input id="fileInput" type="file" multiple hidden>
   <input id="textInput" type="text" placeholder="说点什么…">
   <button id="sendBtn">发送</button>
@@ -97,8 +102,11 @@ var messagesEl = document.getElementById('messages');
 var textInput = document.getElementById('textInput');
 var sendBtn = document.getElementById('sendBtn');
 var attachBtn = document.getElementById('attachBtn');
+var syncClipboardBtn = document.getElementById('syncClipboardBtn');
 var fileInput = document.getElementById('fileInput');
 var statusEl = document.getElementById('status');
+var clipboardHintEl = document.getElementById('clipboardHint');
+var clipboardHintTimer = 0;
 var pairForm = document.getElementById('pairForm');
 var pairInput = document.getElementById('pairInput');
 var rememberInput = document.getElementById('rememberInput');
@@ -108,6 +116,29 @@ var authToken = sessionStorage.getItem('lan-transfer-token') || '';
 var clientId = sessionStorage.getItem('lan-transfer-client-id') || '';
 var resuming = false;
 var seenMessageIds = Object.create(null);
+var recentClipboardSignatures = Object.create(null);
+var recentClipboardOrder = [];
+
+function showClipboardHint(text){
+  clipboardHintEl.textContent = text;
+  clipboardHintEl.classList.add('show');
+  clearTimeout(clipboardHintTimer);
+  clipboardHintTimer = setTimeout(function(){ clipboardHintEl.classList.remove('show'); }, 2200);
+}
+
+function markNewClipboard(signature){
+  if (recentClipboardSignatures[signature]) return false;
+  recentClipboardSignatures[signature] = true;
+  recentClipboardOrder.push(signature);
+  if (recentClipboardOrder.length > 50) delete recentClipboardSignatures[recentClipboardOrder.shift()];
+  return true;
+}
+async function blobSignature(blob){
+  var bytes = new Uint8Array(await blob.arrayBuffer());
+  var hash = 2166136261;
+  for (var i = 0; i < bytes.length; i++) hash = Math.imul(hash ^ bytes[i], 16777619) >>> 0;
+  return 'file:' + (blob.type || '') + ':' + blob.size + ':' + hash;
+}
 
 function deviceName(){
   var platform = navigator.userAgentData && navigator.userAgentData.platform;
@@ -133,8 +164,7 @@ function fallbackCopy(text, done){
 }
 async function copyImage(src, button){
   if (!window.isSecureContext || !navigator.clipboard || typeof ClipboardItem === 'undefined'){
-    button.textContent = '请下载原图';
-    setTimeout(function(){ button.textContent = '复制图片'; }, 1600);
+    showClipboardHint('请右键图片，选择“复制图像”');
     return;
   }
   try {
@@ -143,11 +173,14 @@ async function copyImage(src, button){
     var blob = await response.blob();
     await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })]);
     button.textContent = '已复制';
-    setTimeout(function(){ button.textContent = '复制图片'; }, 1200);
+    setTimeout(function(){ button.textContent = imageCopyLabel(); }, 1200);
   } catch (e) {
-    button.textContent = '复制失败';
-    setTimeout(function(){ button.textContent = '复制图片'; }, 1600);
+    showClipboardHint('复制失败，请右键图片选择“复制图像”');
+    button.textContent = imageCopyLabel();
   }
+}
+function imageCopyLabel(){
+  return window.isSecureContext && navigator.clipboard && typeof ClipboardItem !== 'undefined' ? '复制图片' : '右键复制';
 }
 function firstHttpUrl(text){
   var match = String(text || '').match(/https?:\\/\\/[^\\s<>'"]+/i);
@@ -199,7 +232,7 @@ function addMessage(m){
   } else if (m.kind === 'text'){
     inner = '<div class="bubble text"><div>' + esc(m.text || '') + '</div>' + textActions(m.text || '') + '</div>';
   } else if (isImage(m.mime)){
-    inner = '<div class="bubble file image"><img src="' + esc(m.url || '') + '" alt="' + esc(m.fileName || '') + '"><div class="meta">' + esc(m.fileName || '图片') + ' · ' + fmtSize(m.fileSize) + '</div><div class="image-actions"><button class="text-action image-copy" type="button">复制图片</button><a class="text-action" href="' + esc(m.url || '') + '" target="_blank" rel="noopener noreferrer">打开</a><a class="text-action" href="' + esc(m.url || '') + '" download="' + esc(m.fileName || '图片') + '">下载原图</a></div></div>';
+    inner = '<div class="bubble file image"><img src="' + esc(m.url || '') + '" alt="' + esc(m.fileName || '') + '"><div class="meta">' + esc(m.fileName || '图片') + ' · ' + fmtSize(m.fileSize) + '</div><div class="image-actions"><button class="text-action image-copy" type="button">' + imageCopyLabel() + '</button><a class="text-action" href="' + esc(m.url || '') + '" target="_blank" rel="noopener noreferrer">打开</a><a class="text-action" href="' + esc(m.url || '') + '" download="' + esc(m.fileName || '图片') + '">下载原图</a></div></div>';
   } else {
     var openable = canOpenFile(m.mime, m.fileName);
     var previewable = canPreviewText(m.mime, m.fileName, m.fileSize);
@@ -255,11 +288,6 @@ function handleIncoming(raw){
     if (p.id && seenMessageIds[p.id]) return;
     if (p.id) seenMessageIds[p.id] = true;
     addMessage({ role: 'app', kind: 'text', text: p.text });
-  }
-  else if (p.type === 'clipboard'){
-    if (p.id && seenMessageIds[p.id]) return;
-    if (p.id) seenMessageIds[p.id] = true;
-    addMessage({ role: 'app', kind: 'clipboard', text: p.text, deviceName: p.deviceName });
   }
   else if (p.role === 'app' && p.type === 'file'){
     if (p.id && seenMessageIds[p.id]) return;
@@ -361,25 +389,70 @@ function sendText(){
 }
 function sendClipboard(text){
   text = String(text || '').slice(0, 100000);
-  if (!text || !wsAuthenticated || !ws || ws.readyState !== 1) return;
+  if (!text || !wsAuthenticated || !ws || ws.readyState !== 1) return false;
+  if (!markNewClipboard('text:' + text)) return false;
   var id = Math.random().toString(36).slice(2) + Date.now().toString(36);
   ws.send(JSON.stringify({ type: 'clipboard', text: text, id: id, ts: Date.now() }));
   addMessage({ role: 'browser', kind: 'text', text: text });
+  return true;
 }
+async function syncBrowserClipboard(){
+  if (!wsAuthenticated){ showClipboardHint('请先完成配对'); return; }
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.read === 'function'){
+      var items = await navigator.clipboard.read();
+      var sent = 0;
+      for (var i = 0; i < items.length; i++){
+        var item = items[i];
+        var imageType = item.types.find(function(type){ return type.indexOf('image/') === 0; });
+        if (imageType){
+          var blob = await item.getType(imageType);
+          if (!markNewClipboard(await blobSignature(blob))) continue;
+          var ext = imageType.split('/')[1].replace('jpeg', 'jpg') || 'png';
+          uploadFile(new File([blob], '剪贴板-' + Date.now() + '.' + ext, { type: imageType }));
+          sent++;
+          continue;
+        }
+        if (item.types.indexOf('text/plain') >= 0){
+          var textBlob = await item.getType('text/plain');
+          var value = await textBlob.text();
+          if (value && sendClipboard(value)) sent++;
+        }
+      }
+      showClipboardHint(sent ? '剪贴板已粘贴' : (items.length ? '该剪贴板内容已发送' : '剪贴板没有可粘贴内容'));
+      return;
+    }
+    if (navigator.clipboard && typeof navigator.clipboard.readText === 'function'){
+      var text = await navigator.clipboard.readText();
+      if (text){
+        showClipboardHint(sendClipboard(text) ? '剪贴板已粘贴' : '该剪贴板内容已发送');
+        return;
+      }
+    }
+    throw new Error('clipboard-unavailable');
+  } catch (error){
+    showClipboardHint('浏览器限制读取，请按 Ctrl+V');
+    textInput.placeholder = '按 Ctrl+V 粘贴剪贴板…';
+    textInput.focus();
+  }
+}
+syncClipboardBtn.onclick = syncBrowserClipboard;
 sendBtn.onclick = sendText;
 textInput.addEventListener('keydown', function(e){ if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendText(); } });
-document.addEventListener('paste', function(e){
+document.addEventListener('paste', async function(e){
   if (!wsAuthenticated || e.target === pairInput) return;
   var files = Array.prototype.slice.call((e.clipboardData && e.clipboardData.files) || []);
   if (files.length){
     e.preventDefault();
-    files.forEach(uploadFile);
+    for (var i = 0; i < files.length; i++){
+      if (markNewClipboard(await blobSignature(files[i]))) uploadFile(files[i]);
+    }
     return;
   }
   var text = e.clipboardData && e.clipboardData.getData('text/plain');
   if (!text) return;
   e.preventDefault();
-  sendClipboard(text);
+  if (!sendClipboard(text)) showClipboardHint('该剪贴板内容已发送');
 });
 
 attachBtn.onclick = function(){ fileInput.click(); };
