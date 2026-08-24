@@ -32,38 +32,74 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 ** (index + 1)).toFixed(bytes >= 1024 ** (index + 2) ? 1 : 0)} ${units[index]}`
 }
 
+function firstHttpURL(text: string): string | null {
+  const match = text.match(/https?:\/\/[^\s<>'"]+/i)
+  if (!match) return null
+  try {
+    const url = new URL(match[0])
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null
+  } catch {
+    return null
+  }
+}
+
+async function previewImage(path: string) {
+  const image = UIImage.fromFile(path)
+  if (image) await QuickLook.previewImage(image, true)
+  else await QuickLook.previewURLs([path], true)
+}
+
+async function copyImage(path: string) {
+  const image = UIImage.fromFile(path)
+  if (image) await Pasteboard.setImage(image)
+}
+
 // 图片气泡：按本地路径由原生侧直接解码渲染（UIImage 不进 state，避免非原始类型入桥崩溃），点击共享/保存
 function ImageBubble({ message, mine }: { message: ChatMessage; mine: boolean }) {
   const color = mine ? mineColor : cardColor
+  const path = message.url ?? ""
   return (
-    <Button buttonStyle="plain" action={() => message.url && ShareSheet.present([message.url])}>
-      <VStack alignment="leading" spacing={6} padding={6} background={{ style: color, shape: bubbleShape }} frame={{ maxWidth: 220 }}>
-        <Image filePath={message.url ?? ""} resizable={true} scaleToFit={true} frame={{ maxWidth: 208, maxHeight: 280 }} />
-        <Text font={12} foregroundStyle={mine ? metaMineColor : "secondaryLabel"}>
-          {message.fileName ?? "图片"} · {formatSize(message.fileSize ?? 0)}
-        </Text>
-      </VStack>
-    </Button>
+    <VStack alignment="leading" spacing={6} padding={6} background={{ style: color, shape: bubbleShape }} frame={{ maxWidth: 240 }}>
+      <Button buttonStyle="plain" action={() => path && previewImage(path)}>
+        <Image filePath={path} resizable={true} scaleToFit={true} frame={{ maxWidth: 228, maxHeight: 280 }} />
+      </Button>
+      <Text font={12} foregroundStyle={mine ? metaMineColor : "secondaryLabel"}>
+        {message.fileName ?? "图片"} · {formatSize(message.fileSize ?? 0)}
+      </Text>
+      <HStack spacing={8}>
+        <Button title="预览" systemImage="eye" action={() => path && previewImage(path)} />
+        <Button title="复制" systemImage="doc.on.doc" action={() => path && copyImage(path)} />
+        <Button title="分享" systemImage="square.and.arrow.up" action={() => path && ShareSheet.present([path])} />
+      </HStack>
+    </VStack>
   )
 }
 
 // 文件气泡：图标 + 名 + 大小，同 TextBubble 不设 maxWidth，宽度随内容自适应，点击共享
 function FileBubble({ message, mine }: { message: ChatMessage; mine: boolean }) {
   const color = mine ? mineColor : cardColor
+  const path = message.url ?? ""
   return (
-    <Button buttonStyle="plain" action={() => message.url && ShareSheet.present([message.url ?? ""])}>
-      <HStack spacing={10} padding={10} background={{ style: color, shape: bubbleShape }}>
-        <Text font={22}>{fileIcon(message.fileName)}</Text>
-        <VStack alignment="leading" spacing={2}>
-          <Text font={15} multilineTextAlignment="leading" foregroundStyle={mine ? "white" : "label"}>
-            {message.fileName ?? "文件"}
-          </Text>
-          <Text font={12} foregroundStyle={mine ? metaMineColor : "secondaryLabel"}>
-            {formatSize(message.fileSize ?? 0)}
-          </Text>
-        </VStack>
+    <VStack alignment="leading" spacing={8} padding={10} background={{ style: color, shape: bubbleShape }}>
+      <Button buttonStyle="plain" action={() => path && QuickLook.previewURLs([path], true)}>
+        <HStack spacing={10}>
+          <Text font={22}>{fileIcon(message.fileName)}</Text>
+          <VStack alignment="leading" spacing={2}>
+            <Text font={15} multilineTextAlignment="leading" foregroundStyle={mine ? "white" : "label"}>
+              {message.fileName ?? "文件"}
+            </Text>
+            <Text font={12} foregroundStyle={mine ? metaMineColor : "secondaryLabel"}>
+              {formatSize(message.fileSize ?? 0)}
+            </Text>
+          </VStack>
+        </HStack>
+      </Button>
+      <HStack spacing={8}>
+        <Button title="预览" systemImage="eye" action={() => path && QuickLook.previewURLs([path], true)} />
+        <Button title="打开" systemImage="arrow.up.forward.app" action={() => path && DocumentInteraction.optionsMenu(path)} />
+        <Button title="分享" systemImage="square.and.arrow.up" action={() => path && ShareSheet.present([path])} />
       </HStack>
-    </Button>
+    </VStack>
   )
 }
 
@@ -72,11 +108,16 @@ function FileBubble({ message, mine }: { message: ChatMessage; mine: boolean }) 
 // textSelection 会让 Text 默认变单行截断，须显式给 lineLimit 区间恢复多行换行
 function TextBubble({ text, mine }: { text: string; mine: boolean }) {
   const color = mine ? mineColor : cardColor
+  const url = firstHttpURL(text)
   return (
-    <VStack alignment="leading" padding={{ horizontal: 14, vertical: 10 }} background={{ style: color, shape: bubbleShape }}>
+    <VStack alignment="leading" spacing={8} padding={{ horizontal: 14, vertical: 10 }} background={{ style: color, shape: bubbleShape }}>
       <Text font={15} foregroundStyle={mine ? "white" : "label"} multilineTextAlignment="leading" textSelection={true} lineLimit={{ min: 1, max: 99 }}>
         {text}
       </Text>
+      <HStack spacing={8}>
+        <Button title="复制" systemImage="doc.on.doc" action={() => Pasteboard.setString(text)} />
+        {url ? <Button title="打开" systemImage="safari" action={() => Safari.present(url, true)} /> : null}
+      </HStack>
     </VStack>
   )
 }

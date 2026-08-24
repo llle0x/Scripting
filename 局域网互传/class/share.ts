@@ -30,6 +30,34 @@ const TRUSTED_DEVICES_KEY = "lan-transfer.trustedDevices"
 const MAX_TRUSTED_DEVICES = 20
 const HEARTBEAT_INTERVAL = 5_000
 const HEARTBEAT_TIMEOUT = 15_000
+const EXTENSIONLESS_TEXT_NAMES = new Set(["license", "copying", "notice", "readme", "changelog", "authors", "contributors", "makefile", "dockerfile"])
+
+function isLikelyTextFile(path: string): boolean {
+  const name = Path.basename(path).toLowerCase()
+  if (EXTENSIONLESS_TEXT_NAMES.has(name)) return true
+  let file: FileEntity | null = null
+  try {
+    file = FileEntity.openForReading(path)
+    const bytes = file.read(8192).toUint8Array()
+    if (!bytes || bytes.length === 0) return true
+    let controls = 0
+    for (const byte of bytes) {
+      if (byte === 0) return false
+      if (byte < 32 && byte !== 9 && byte !== 10 && byte !== 12 && byte !== 13) controls++
+    }
+    return controls / bytes.length < 0.02
+  } catch {
+    return false
+  } finally {
+    try { file?.close() } catch {}
+  }
+}
+
+function browserMimeType(path: string): string {
+  const detected = FileManager.mimeType(path) || ""
+  if (detected && detected !== "application/octet-stream") return detected
+  return isLikelyTextFile(path) ? "text/plain; charset=utf-8" : "application/octet-stream"
+}
 
 function tokenHash(token: string): string {
   const data = Data.fromString(token)
@@ -154,9 +182,11 @@ export class Share {
     return out
   }
 
-  private broadcast(packet: Broadcast) {
+  private broadcast(packet: Broadcast, excluded?: WebSocketSession) {
     const text = JSON.stringify(packet)
-    for (const session of this.sessions) session.writeText(text)
+    for (const session of this.sessions) {
+      if (session !== excluded) session.writeText(text)
+    }
   }
 
   /** 启动 HTTP + WebSocket 服务（幂等） */
@@ -348,7 +378,7 @@ export class Share {
       try {
         return HttpResponse.raw(200, "OK", {
           headers: {
-            "content-type": FileManager.mimeType(path) || "application/octet-stream",
+            "content-type": browserMimeType(path),
             "cache-control": "no-store",
             "x-content-type-options": "nosniff",
           },
@@ -447,6 +477,35 @@ export class Share {
         },
       })
       void this.notifyIncomingText(text, client)
+      return
+    }
+    if (packet.type === "clipboard") {
+      if (typeof packet.text !== "string" || packet.text.length === 0) return
+      const text = packet.text.slice(0, 100_000)
+      const client = this.sessionClients.get(session)
+      this.receivedCount++
+      this.notifyActivityStateChanged()
+      this.emit({
+        type: "incoming",
+        message: {
+          id: packet.id,
+          ts: packet.ts,
+          role: "browser",
+          kind: "text",
+          text,
+          deviceName: client?.name,
+          address: client?.address,
+        },
+      })
+      this.broadcast({
+        role: "browser",
+        type: "clipboard",
+        text,
+        id: packet.id,
+        ts: packet.ts,
+        deviceName: client?.name,
+      }, session)
+      void this.notifyIncomingText(text, client)
     }
   }
 
@@ -492,7 +551,7 @@ export class Share {
       const ts = Date.now()
       const fileName = Path.basename(path)
       const stat = await FileManager.stat(path)
-      const mime = FileManager.mimeType(path)
+      const mime = browserMimeType(path)
       const downloadKey = randomToken()
       this.downloads.set(id, { path, key: downloadKey })
       const message: ChatMessage = {
