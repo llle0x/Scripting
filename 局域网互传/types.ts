@@ -39,6 +39,7 @@ export type Peer = "app" | "browser"
 export type IncomingPacket =
   | { type: "auth"; token: string; clientId: string }
   | { type: "text"; text: string; id: string; ts: number }
+  | { type: "clipboard"; text: string; id: string; ts: number }
   | { type: "ping" }
 
 /** HTTPS/WS 服务端→浏览器广播的包 */

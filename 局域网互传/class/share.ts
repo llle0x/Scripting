@@ -23,13 +23,56 @@ function randomPairingCode(): string {
 }
 
 type PairAttempt = { failures: number; windowStart: number; blockedUntil: number }
-type TrustedDevice = { tokenHash: string; name: string; createdAt: number; lastUsedAt: number }
-type ClientInfo = { name: string; address: string }
+type TrustedDevice = { tokenHash: string; name: string; note?: string; createdAt: number; lastUsedAt: number }
+type ClientInfo = { clientId: string; name: string; note?: string; address: string; trustedDeviceId?: string }
 
 const TRUSTED_DEVICES_KEY = "lan-transfer.trustedDevices"
+const AUTO_CLIPBOARD_KEY = "lan-transfer.autoClipboardOnForeground"
 const MAX_TRUSTED_DEVICES = 20
 const HEARTBEAT_INTERVAL = 5_000
 const HEARTBEAT_TIMEOUT = 15_000
+const EXTENSIONLESS_TEXT_NAMES = new Set(["license", "copying", "notice", "readme", "changelog", "authors", "contributors", "makefile", "dockerfile"])
+
+const clientDisplayName = (client?: ClientInfo) => client?.note?.trim() || client?.name
+
+function isLikelyTextFile(path: string): boolean {
+  const name = Path.basename(path).toLowerCase()
+  if (EXTENSIONLESS_TEXT_NAMES.has(name)) return true
+  let file: FileEntity | null = null
+  try {
+    file = FileEntity.openForReading(path)
+    const bytes = file.read(8192).toUint8Array()
+    if (!bytes || bytes.length === 0) return true
+    let controls = 0
+    for (const byte of bytes) {
+      if (byte === 0) return false
+      if (byte < 32 && byte !== 9 && byte !== 10 && byte !== 12 && byte !== 13) controls++
+    }
+    return controls / bytes.length < 0.02
+  } catch {
+    return false
+  } finally {
+    try { file?.close() } catch {}
+  }
+}
+
+function browserMimeType(path: string): string {
+  const detected = FileManager.mimeType(path) || ""
+  if (detected && detected !== "application/octet-stream") return detected
+  return isLikelyTextFile(path) ? "text/plain; charset=utf-8" : "application/octet-stream"
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ["KB", "MB", "GB", "TB"]
+  let value = bytes / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`
+}
 
 function tokenHash(token: string): string {
   const data = Data.fromString(token)
@@ -97,6 +140,7 @@ export class Share {
   private started = false
   private sentCount = 0
   private receivedCount = 0
+  private handledClipboardChangeCount = -1
   // 上传收到的事件队列：registerAsyncHandler 的上下文里直接回调 UI（observable setValue）
   // 会导致整个进程崩溃，因此这里只入队，由页面在自己的定时器里 drainInbox 后再刷新
   private inbox: AppEvent[] = []
@@ -105,9 +149,9 @@ export class Share {
   setListener(fn: ((e: AppEvent) => void) | null) {
     this.listener = fn
     if (fn) {
-      fn({ type: "status", peer: "browser", online: this.online, deviceName: this.lastClient?.name, address: this.lastClient?.address })
+      fn({ type: "status", peer: "browser", online: this.online, deviceName: clientDisplayName(this.lastClient ?? undefined), address: this.lastClient?.address })
       if (this.online && this.lastClient) {
-        fn({ type: "connection", online: true, deviceName: this.lastClient.name, address: this.lastClient.address })
+        fn({ type: "connection", online: true, deviceName: clientDisplayName(this.lastClient)!, address: this.lastClient.address })
       }
     }
   }
@@ -127,17 +171,17 @@ export class Share {
   private setOnline(online: boolean, client?: ClientInfo) {
     this.online = online
     if (client) this.lastClient = client
-    this.emit({ type: "status", peer: "browser", online, deviceName: client?.name, address: client?.address })
+    this.emit({ type: "status", peer: "browser", online, deviceName: clientDisplayName(client), address: client?.address })
     this.notifyActivityStateChanged()
   }
 
   private emitConnection(online: boolean, client: ClientInfo) {
-    this.emit({ type: "connection", online, deviceName: client.name, address: client.address })
+    this.emit({ type: "connection", online, deviceName: clientDisplayName(client)!, address: client.address })
   }
 
-  private authorizeClient(name: string, address: string): string {
+  private authorizeClient(name: string, address: string, trustedDeviceId?: string, note?: string): string {
     const clientId = randomToken()
-    this.authorizedClients.set(clientId, { name, address })
+    this.authorizedClients.set(clientId, { clientId, name, note, address, trustedDeviceId })
     while (this.authorizedClients.size > 50) {
       const oldest = this.authorizedClients.keys().next().value
       if (typeof oldest !== "string") break
@@ -154,9 +198,19 @@ export class Share {
     return out
   }
 
-  private broadcast(packet: Broadcast) {
+  get clipboardChangeCount(): number {
+    return this.handledClipboardChangeCount
+  }
+
+  markClipboardHandled(changeCount: number) {
+    this.handledClipboardChangeCount = changeCount
+  }
+
+  private broadcast(packet: Broadcast, excluded?: WebSocketSession) {
     const text = JSON.stringify(packet)
-    for (const session of this.sessions) session.writeText(text)
+    for (const session of this.sessions) {
+      if (session !== excluded) session.writeText(text)
+    }
   }
 
   /** 启动 HTTP + WebSocket 服务（幂等） */
@@ -239,8 +293,8 @@ export class Share {
       }
 
       this.pairAttempts.delete(client)
-      const clientId = this.authorizeClient(deviceName, client)
       if (!remember) {
+        const clientId = this.authorizeClient(deviceName, client)
         return this.jsonResponse(
           200,
           "OK",
@@ -257,6 +311,7 @@ export class Share {
         return this.jsonResponse(500, "Internal Server Error", { ok: false, error: "无法保存受信任设备" })
       }
       this.trustedDevices = next
+      const clientId = this.authorizeClient(deviceName, client, trusted.tokenHash)
       return this.jsonResponse(
         200,
         "OK",
@@ -284,7 +339,7 @@ export class Share {
       if (index < 0) return this.unauthorizedResponse(true)
       this.trustedDevices[index] = { ...this.trustedDevices[index], name: deviceName, lastUsedAt: Date.now() }
       this.saveTrustedDevices(this.trustedDevices)
-      const clientId = this.authorizeClient(deviceName, req.address ?? "未知 IP")
+      const clientId = this.authorizeClient(deviceName, req.address ?? "未知 IP", hash, this.trustedDevices[index].note)
       return this.jsonResponse(200, "OK", { ok: true, token: this.sessionToken, clientId })
     })
 
@@ -322,12 +377,13 @@ export class Share {
           fileSize: stat.size,
           mime: ctype || FileManager.mimeType(dest),
           url: dest,
-          deviceName: client?.name,
+          deviceName: clientDisplayName(client),
           address: client?.address ?? req.address ?? undefined,
         }
         this.inbox.push({ type: "incoming", message })
         this.receivedCount++
         this.notifyActivityStateChanged()
+        void this.notifyIncomingFile(message)
         return this.jsonResponse(200, "OK", { ok: true })
       } catch (e) {
         // 上传异常不能拖垮整个脚本运行时，返回 500 供浏览器端感知
@@ -348,7 +404,7 @@ export class Share {
       try {
         return HttpResponse.raw(200, "OK", {
           headers: {
-            "content-type": FileManager.mimeType(path) || "application/octet-stream",
+            "content-type": browserMimeType(path),
             "cache-control": "no-store",
             "x-content-type-options": "nosniff",
           },
@@ -442,7 +498,28 @@ export class Share {
           role: "browser",
           kind: "text",
           text,
-          deviceName: client?.name,
+          deviceName: clientDisplayName(client),
+          address: client?.address,
+        },
+      })
+      void this.notifyIncomingText(text, client)
+      return
+    }
+    if (packet.type === "clipboard") {
+      if (typeof packet.text !== "string" || packet.text.length === 0) return
+      const text = packet.text.slice(0, 100_000)
+      const client = this.sessionClients.get(session)
+      this.receivedCount++
+      this.notifyActivityStateChanged()
+      this.emit({
+        type: "incoming",
+        message: {
+          id: packet.id,
+          ts: packet.ts,
+          role: "browser",
+          kind: "text",
+          text,
+          deviceName: clientDisplayName(client),
           address: client?.address,
         },
       })
@@ -474,6 +551,33 @@ export class Share {
     }
   }
 
+  private async notifyIncomingFile(message: ChatMessage) {
+    if (message.kind !== "file" || !message.url) return
+    const isImage = (message.mime ?? "").toLowerCase().startsWith("image/")
+    const sender = [message.deviceName, message.address].filter(Boolean).join(" · ") || "浏览器"
+    let iconImageData: Data | Notification.SystemImageIcon = {
+      systemImage: isImage ? "photo.fill" : "doc.fill",
+      color: "systemBlue",
+    }
+    // 小图片直接作为通知图标；大图不整份载入内存，改用系统图标。
+    if (isImage && (message.fileSize ?? 0) <= 2 * 1024 * 1024) {
+      try {
+        iconImageData = FileManager.readAsDataSync(message.url)
+      } catch {}
+    }
+    try {
+      await Notification.schedule({
+        title: isImage ? "收到图片" : "收到文件",
+        subtitle: sender,
+        body: `${message.fileName ?? "未命名文件"} · ${formatFileSize(message.fileSize ?? 0)}`,
+        iconImageData,
+        threadIdentifier: "lan-transfer-files",
+      })
+    } catch (error) {
+      console.warn(`文件通知发送失败：${String(error)}`)
+    }
+  }
+
   /** App 端发送文字：广播给浏览器并返回本地消息 */
   sendText(text: string): ChatMessage {
     const id = uid()
@@ -484,6 +588,11 @@ export class Share {
     return { id, ts, role: "app", kind: "text", text }
   }
 
+  /** 前台恢复或手动粘贴时发送，并交给页面队列显示。 */
+  sendPastedText(text: string) {
+    this.inbox.push({ type: "outgoing", message: this.sendText(text) })
+  }
+
   /** App 端发送若干文件：注册下载路由并广播 */
   async sendFiles(paths: string[]): Promise<ChatMessage[]> {
     const out: ChatMessage[] = []
@@ -492,7 +601,7 @@ export class Share {
       const ts = Date.now()
       const fileName = Path.basename(path)
       const stat = await FileManager.stat(path)
-      const mime = FileManager.mimeType(path)
+      const mime = browserMimeType(path)
       const downloadKey = randomToken()
       this.downloads.set(id, { path, key: downloadKey })
       const message: ChatMessage = {
@@ -522,6 +631,13 @@ export class Share {
       out.push(message)
     }
     return out
+  }
+
+  /** 剪贴板图片需保留至会话结束，供浏览器通过下载路由读取。 */
+  async sendPastedFiles(paths: string[]) {
+    for (const path of paths) this.temporaryOutgoingPaths.add(path)
+    const messages = await this.sendFiles(paths)
+    for (const message of messages) this.inbox.push({ type: "outgoing", message })
   }
 
   /** 分享表单文件进入当前服务器队列；已有连接时立即发送，否则等待首台浏览器。 */
@@ -567,6 +683,89 @@ export class Share {
     return this.trustedDevices.length
   }
 
+  get trustedDeviceList() {
+    return this.trustedDevices.map((device) => ({
+      id: device.tokenHash,
+      name: device.name,
+      note: device.note ?? "",
+      createdAt: device.createdAt,
+      lastUsedAt: device.lastUsedAt,
+    }))
+  }
+
+  get temporaryConnectedDeviceList() {
+    const devices = new Map<string, { id: string; name: string; note: string; address: string }>()
+    for (const client of this.sessionClients.values()) {
+      if (!client.trustedDeviceId) devices.set(client.clientId, { id: client.clientId, name: client.name, note: client.note ?? "", address: client.address })
+    }
+    return [...devices.values()]
+  }
+
+  disconnectTemporaryDevice(clientId: string) {
+    const client = this.authorizedClients.get(clientId)
+    if (!client || client.trustedDeviceId) return false
+    this.authorizedClients.delete(clientId)
+    for (const [session, sessionClient] of [...this.sessionClients]) {
+      if (sessionClient.clientId !== clientId) continue
+      try { session.close() } catch {}
+      this.removeSession(session)
+    }
+    return true
+  }
+
+  setTemporaryDeviceNote(clientId: string, note: string) {
+    const client = this.authorizedClients.get(clientId)
+    if (!client || client.trustedDeviceId) return false
+    client.note = note.trim().slice(0, 60)
+    return true
+  }
+
+  setTrustedDeviceNote(id: string, note: string) {
+    const index = this.trustedDevices.findIndex((device) => device.tokenHash === id)
+    if (index < 0) return false
+    const value = note.trim().slice(0, 60)
+    const next = [...this.trustedDevices]
+    next[index] = { ...next[index], note: value }
+    if (!this.saveTrustedDevices(next)) return false
+    this.trustedDevices = next
+    for (const client of this.authorizedClients.values()) {
+      if (client.trustedDeviceId === id) client.note = value
+    }
+    return true
+  }
+
+  forgetTrustedDevice(id: string) {
+    const next = this.trustedDevices.filter((device) => device.tokenHash !== id)
+    if (next.length === this.trustedDevices.length) return false
+    if (!this.saveTrustedDevices(next)) return false
+    this.trustedDevices = next
+    this.disconnectTrustedSessions(new Set([id]))
+    return true
+  }
+
+  private disconnectTrustedSessions(ids: Set<string>) {
+    for (const [clientId, client] of [...this.authorizedClients]) {
+      if (client.trustedDeviceId && ids.has(client.trustedDeviceId)) this.authorizedClients.delete(clientId)
+    }
+    for (const [session, client] of [...this.sessionClients]) {
+      if (!client.trustedDeviceId || !ids.has(client.trustedDeviceId)) continue
+      try { session.close() } catch {}
+      this.removeSession(session)
+    }
+  }
+
+  get autoSendClipboardOnForeground(): boolean {
+    try {
+      return Keychain.get(AUTO_CLIPBOARD_KEY) !== "false"
+    } catch {
+      return true
+    }
+  }
+
+  set autoSendClipboardOnForeground(value: boolean) {
+    try { Keychain.set(AUTO_CLIPBOARD_KEY, value ? "true" : "false") } catch {}
+  }
+
   get activitySnapshot() {
     const clients: ClientInfo[] = []
     const seen = new Set<string>()
@@ -574,7 +773,7 @@ export class Share {
       const key = `${client.name}\u0000${client.address}`
       if (seen.has(key)) continue
       seen.add(key)
-      clients.push({ name: client.name, address: client.address })
+      clients.push({ clientId: client.clientId, name: clientDisplayName(client)!, address: client.address })
     }
     return {
       online: clients.length > 0,
@@ -585,16 +784,19 @@ export class Share {
   }
 
   forgetTrustedDevices() {
+    const ids = new Set(this.trustedDevices.map((device) => device.tokenHash))
     this.trustedDevices = []
     try {
       Keychain.remove(TRUSTED_DEVICES_KEY)
     } catch {
       // Keychain 不可用时仍保持当前运行期的信任列表为空
     }
+    this.disconnectTrustedSessions(ids)
   }
 
   private isAuthorized(req: HttpRequest): boolean {
-    return headerValue(req.headers, "x-session-token") === this.sessionToken
+    const clientId = headerValue(req.headers, "x-client-id") ?? ""
+    return headerValue(req.headers, "x-session-token") === this.sessionToken && this.authorizedClients.has(clientId)
   }
 
   private jsonResponse(status: number, phrase: string, value: unknown, extraHeaders: Record<string, string> = {}): HttpResponse {
@@ -681,6 +883,7 @@ export class Share {
     this.sessionClients.clear()
     this.sessionLastSeen.clear()
     this.inbox = []
+    this.handledClipboardChangeCount = -1
     this.online = false
     this.lastClient = null
     this.started = false
