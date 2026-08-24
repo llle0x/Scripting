@@ -119,8 +119,9 @@ var seenMessageIds = Object.create(null);
 var seenMessageOrder = [];
 var recentClipboardSignatures = Object.create(null);
 var recentClipboardOrder = [];
-var MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+var MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024 * 1024;
 var MAX_BROWSER_MESSAGES = 500;
+var uploadQueue = Promise.resolve();
 
 function markMessageSeen(id){
   if (!id || seenMessageIds[id]) return false;
@@ -390,9 +391,12 @@ function resumeTrusted(showError){
 function authorizedFetch(url, options){
   options = options || {};
   options.headers = Object.assign({}, options.headers || {}, { 'x-session-token': authToken, 'x-client-id': clientId });
-  return fetch(url, options).then(function(res){
+  return fetch(url, options).then(async function(res){
     if (res.status === 401){ clearPairing('配对会话已失效，请重新配对'); throw new Error('未授权'); }
-    if (!res.ok) throw new Error('请求失败（' + res.status + '）');
+    if (!res.ok){
+      var body = await res.json().catch(function(){ return {}; });
+      throw new Error(body.error || ('请求失败（' + res.status + '）'));
+    }
     return res;
   });
 }
@@ -484,7 +488,7 @@ attachBtn.onclick = function(){ fileInput.click(); };
 fileInput.onchange = function(){
   var files = Array.prototype.slice.call(fileInput.files || []);
   fileInput.value = '';
-  files.forEach(function(file){ void uploadFile(file); });
+  files.forEach(enqueueUpload);
 };
 var dragDepth = 0;
 document.addEventListener('dragenter', function(e){
@@ -506,23 +510,55 @@ document.addEventListener('drop', function(e){
   dragDepth = 0;
   document.body.classList.remove('dragging');
   var files = Array.prototype.slice.call((e.dataTransfer && e.dataTransfer.files) || []);
-  files.forEach(function(file){ void uploadFile(file); });
+  files.forEach(enqueueUpload);
 });
+function enqueueUpload(file){
+  uploadQueue = uploadQueue.then(function(){ return uploadFile(file); }, function(){ return uploadFile(file); });
+}
+async function sendChunkWithRetry(url, chunk){
+  var lastError = null;
+  for (var attempt = 1; attempt <= 3; attempt++){
+    try {
+      await authorizedFetch(url, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: chunk });
+      return;
+    } catch (error){
+      lastError = error;
+      if (!authToken || attempt === 3) break;
+      await new Promise(function(resolve){ setTimeout(resolve, attempt * 350); });
+    }
+  }
+  throw lastError || new Error('分片上传失败');
+}
 async function uploadFile(file){
   if (!authToken || !clientId){ showClipboardHint('请先完成配对'); return false; }
-  if (file.size > MAX_UPLOAD_BYTES){ showClipboardHint('文件超过 50 MB，无法发送'); return false; }
+  if (file.size > MAX_UPLOAD_FILE_BYTES){ showClipboardHint('文件超过 10 GB，无法发送'); return false; }
   showClipboardHint('正在发送：' + (file.name || '未命名'));
+  var uploadId = '';
   try {
-    await authorizedFetch('/upload?name=' + encodeURIComponent(file.name || '未命名'), {
-      method: 'POST',
-      headers: { 'content-type': file.type || 'application/octet-stream' },
-      body: file
-    });
+    var startURL = '/upload/start?name=' + encodeURIComponent(file.name || '未命名') +
+      '&size=' + encodeURIComponent(String(file.size)) + '&mime=' + encodeURIComponent(file.type || 'application/octet-stream');
+    var startResponse = await authorizedFetch(startURL, { method: 'POST' });
+    var start = await startResponse.json();
+    uploadId = start.uploadId || '';
+    var chunkSize = Number(start.chunkSize) || (4 * 1024 * 1024);
+    if (!uploadId) throw new Error('服务器未创建上传任务');
+    var index = 0;
+    for (var offset = 0; offset < file.size; offset += chunkSize){
+      var chunk = file.slice(offset, Math.min(file.size, offset + chunkSize));
+      await sendChunkWithRetry('/upload/chunk?id=' + encodeURIComponent(uploadId) + '&index=' + index, chunk);
+      index++;
+      var progress = Math.min(100, Math.round((offset + chunk.size) * 100 / Math.max(1, file.size)));
+      showClipboardHint('正在发送 ' + progress + '%：' + (file.name || '未命名'));
+    }
+    await authorizedFetch('/upload/finish?id=' + encodeURIComponent(uploadId), { method: 'POST' });
     addMessage({ role: 'browser', kind: 'file', fileName: file.name, fileSize: file.size, mime: file.type, url: URL.createObjectURL(file) });
     showClipboardHint('发送成功：' + (file.name || '未命名'));
     return true;
   } catch (error){
-    showClipboardHint('发送失败：' + (file.name || '未命名'));
+    if (uploadId && authToken){
+      try { await authorizedFetch('/upload/abort?id=' + encodeURIComponent(uploadId), { method: 'POST' }); } catch (ignore){}
+    }
+    showClipboardHint('发送失败：' + (error && error.message ? error.message : (file.name || '未命名')));
     return false;
   }
 }

@@ -25,12 +25,26 @@ function randomPairingCode(): string {
 type PairAttempt = { failures: number; windowStart: number; blockedUntil: number }
 type TrustedDevice = { tokenHash: string; name: string; note?: string; createdAt: number; lastUsedAt: number }
 type ClientInfo = { clientId: string; name: string; note?: string; address: string; trustedDeviceId?: string }
+type UploadTask = {
+  id: string
+  tempPath: string
+  fileName: string
+  mime: string
+  totalSize: number
+  receivedSize: number
+  nextIndex: number
+  clientId: string
+  updatedAt: number
+}
 
 const TRUSTED_DEVICES_KEY = "lan-transfer.trustedDevices"
 const AUTO_CLIPBOARD_KEY = "lan-transfer.autoClipboardOnForeground"
 const MAX_TRUSTED_DEVICES = 20
 const PREFERRED_PORT = 8080
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+const UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024
+const MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024 * 1024
+const UPLOAD_TASK_TTL = 30 * 60 * 1_000
+const MAX_ACTIVE_UPLOAD_TASKS = 16
 const MAX_OUTGOING_HISTORY = 100
 const MAX_INBOX_EVENTS = 500
 const HEARTBEAT_INTERVAL = 5_000
@@ -134,6 +148,7 @@ export class Share {
   private pairAttempts = new Map<string, PairAttempt>()
   private trustedDevices: TrustedDevice[] = []
   private authorizedClients = new Map<string, ClientInfo>()
+  private uploadTasks = new Map<string, UploadTask>()
   private sessionClients = new Map<WebSocketSession, ClientInfo>()
   private sessionLastSeen = new Map<WebSocketSession, number>()
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null
@@ -248,21 +263,23 @@ export class Share {
     this.pendingOutgoingPaths = []
     this.temporaryOutgoingPaths.clear()
     this.pairAttempts.clear()
+    this.uploadTasks.clear()
     this.trustedDevices = this.loadTrustedDevices()
+    if (await FileManager.exists(this.uploadDir)) await FileManager.remove(this.uploadDir)
     await FileManager.createDirectory(this.uploadDir, true)
 
     this.server = new HttpServer()
     let error = this.server.start({
       port: PREFERRED_PORT,
       forceIPv4: true,
-      maxRequestBodySize: MAX_UPLOAD_BYTES,
+      maxRequestBodySize: UPLOAD_CHUNK_BYTES,
     })
     if (error) {
       this.server = new HttpServer()
       error = this.server.start({
         port: 0,
         forceIPv4: true,
-        maxRequestBodySize: MAX_UPLOAD_BYTES,
+        maxRequestBodySize: UPLOAD_CHUNK_BYTES,
       })
     }
     if (error) throw new Error(`HTTP 服务启动失败：${error}`)
@@ -374,25 +391,84 @@ export class Share {
       return this.jsonResponse(200, "OK", { ok: true, token: this.sessionToken, clientId })
     })
 
-    // 文件上传沿用原作者的整文件同步流程；配对令牌通过专用请求头校验。
-    this.server.registerHandler("/upload", (req) => {
+    // 分片上传：单个请求最多 4 MB，服务端逐片追加落盘，完成后再公开文件。
+    this.server.registerHandler("/upload/start", (req) => {
       try {
         if (!this.isAuthorized(req)) return this.unauthorizedResponse()
         if (req.method !== "POST") return this.jsonResponse(405, "Method Not Allowed", { ok: false, error: "请使用 POST" })
-        const ctype = headerValue(req.headers, "content-type") ?? ""
-        if (ctype.indexOf("multipart/") === 0) {
-          return this.jsonResponse(400, "Bad Request", { ok: false, error: "浏览器页面是旧版，请刷新" })
+        const clientId = headerValue(req.headers, "x-client-id") ?? ""
+        if (this.uploadTasks.size >= MAX_ACTIVE_UPLOAD_TASKS) {
+          return this.jsonResponse(429, "Too Many Requests", { ok: false, error: "同时上传任务过多，请稍后重试" })
         }
-        let qname = req.queryParams.find((q) => q.key === "name")?.value
-        if (qname && qname.indexOf("%") >= 0) {
-          try {
-            qname = decodeURIComponent(qname)
-          } catch {}
+        const fileName = this.sanitizeName(this.queryValue(req, "name") ?? "未命名")
+        const mime = (this.queryValue(req, "mime") ?? "application/octet-stream").slice(0, 200)
+        const totalSize = Number(this.queryValue(req, "size"))
+        if (!Number.isSafeInteger(totalSize) || totalSize < 0 || totalSize > MAX_UPLOAD_FILE_BYTES) {
+          return this.jsonResponse(400, "Bad Request", { ok: false, error: "文件大小无效或超过 10 GB" })
         }
-        const dest = this.uniquePath(this.sanitizeName(qname ?? "未命名"))
-        FileManager.writeAsDataSync(dest, req.body)
-        const stat = FileManager.statSync(dest)
-        const client = this.authorizedClients.get(headerValue(req.headers, "x-client-id") ?? "")
+        const id = randomToken()
+        const tempPath = Path.join(this.uploadDir, `.upload-${id}.part`)
+        FileManager.writeAsDataSync(tempPath, Data.fromString("")!)
+        this.uploadTasks.set(id, {
+          id,
+          tempPath,
+          fileName,
+          mime,
+          totalSize,
+          receivedSize: 0,
+          nextIndex: 0,
+          clientId,
+          updatedAt: Date.now(),
+        })
+        return this.jsonResponse(200, "OK", { ok: true, uploadId: id, chunkSize: UPLOAD_CHUNK_BYTES })
+      } catch (error) {
+        return this.uploadError(error)
+      }
+    })
+
+    this.server.registerHandler("/upload/chunk", (req) => {
+      try {
+        if (!this.isAuthorized(req)) return this.unauthorizedResponse()
+        if (req.method !== "POST") return this.jsonResponse(405, "Method Not Allowed", { ok: false, error: "请使用 POST" })
+        const task = this.uploadTaskForRequest(req)
+        if (!task) return this.jsonResponse(404, "Not Found", { ok: false, error: "上传任务不存在或已失效" })
+        const index = Number(this.queryValue(req, "index"))
+        if (index === task.nextIndex - 1) {
+          return this.jsonResponse(200, "OK", { ok: true, received: task.receivedSize, nextIndex: task.nextIndex })
+        }
+        if (!Number.isSafeInteger(index) || index !== task.nextIndex) {
+          return this.jsonResponse(409, "Conflict", { ok: false, error: `分片顺序错误，应为 ${task.nextIndex}` })
+        }
+        if (req.body.size <= 0 || req.body.size > UPLOAD_CHUNK_BYTES || task.receivedSize + req.body.size > task.totalSize) {
+          return this.jsonResponse(413, "Payload Too Large", { ok: false, error: "分片大小超出限制" })
+        }
+        FileManager.appendDataSync(task.tempPath, req.body)
+        task.receivedSize += req.body.size
+        task.nextIndex++
+        task.updatedAt = Date.now()
+        return this.jsonResponse(200, "OK", { ok: true, received: task.receivedSize, nextIndex: task.nextIndex })
+      } catch (error) {
+        return this.uploadError(error)
+      }
+    })
+
+    this.server.registerHandler("/upload/finish", (req) => {
+      try {
+        if (!this.isAuthorized(req)) return this.unauthorizedResponse()
+        if (req.method !== "POST") return this.jsonResponse(405, "Method Not Allowed", { ok: false, error: "请使用 POST" })
+        const task = this.uploadTaskForRequest(req)
+        if (!task) return this.jsonResponse(404, "Not Found", { ok: false, error: "上传任务不存在或已失效" })
+        const stat = FileManager.statSync(task.tempPath)
+        if (task.receivedSize !== task.totalSize || stat.size !== task.totalSize) {
+          return this.jsonResponse(409, "Conflict", {
+            ok: false,
+            error: `文件尚未完整上传（${task.receivedSize}/${task.totalSize}）`,
+          })
+        }
+        const dest = this.uniquePath(task.fileName)
+        FileManager.renameSync(task.tempPath, dest)
+        this.uploadTasks.delete(task.id)
+        const client = this.authorizedClients.get(task.clientId)
         const message: ChatMessage = {
           id: uid(),
           ts: Date.now(),
@@ -400,7 +476,7 @@ export class Share {
           kind: "file",
           fileName: Path.basename(dest),
           fileSize: stat.size,
-          mime: ctype || FileManager.mimeType(dest),
+          mime: task.mime || FileManager.mimeType(dest),
           url: dest,
           deviceName: clientDisplayName(client),
           address: client?.address ?? req.address ?? undefined,
@@ -410,13 +486,22 @@ export class Share {
         this.notifyActivityStateChanged()
         void this.notifyIncomingFile(message)
         return this.jsonResponse(200, "OK", { ok: true })
-      } catch (e) {
-        // 上传异常不能拖垮整个脚本运行时，返回 500 供浏览器端感知
-        return HttpResponse.raw(500, "Internal Server Error", {
-          headers: { "content-type": "application/json" },
-          body: Data.fromString(JSON.stringify({ ok: false, error: String(e) }))!,
-        })
+      } catch (error) {
+        return this.uploadError(error)
       }
+    })
+
+    this.server.registerHandler("/upload/abort", (req) => {
+      if (!this.isAuthorized(req)) return this.unauthorizedResponse()
+      if (req.method !== "POST") return this.jsonResponse(405, "Method Not Allowed", { ok: false, error: "请使用 POST" })
+      const task = this.uploadTaskForRequest(req)
+      if (task) this.removeUploadTask(task)
+      return this.jsonResponse(200, "OK", { ok: true })
+    })
+
+    // 旧版整文件上传入口不再接受数据，提示浏览器刷新获取分片协议。
+    this.server.registerHandler("/upload", () => {
+      return this.jsonResponse(426, "Upgrade Required", { ok: false, error: "浏览器页面是旧版，请刷新" })
     })
 
     // 下载路由：用授权会话才能获取的单文件随机 key 保护，保留浏览器原生流式下载
@@ -476,6 +561,10 @@ export class Share {
         if ((this.sessionLastSeen.get(session) ?? 0) >= cutoff) continue
         try { session.close() } catch {}
         this.removeSession(session)
+      }
+      const expiredBefore = Date.now() - UPLOAD_TASK_TTL
+      for (const task of [...this.uploadTasks.values()]) {
+        if (task.updatedAt < expiredBefore) this.removeUploadTask(task)
       }
       this.scheduleHeartbeatSweep()
     }, HEARTBEAT_INTERVAL)
@@ -822,6 +911,34 @@ export class Share {
     return headerValue(req.headers, "x-session-token") === this.sessionToken && this.authorizedClients.has(clientId)
   }
 
+  private queryValue(req: HttpRequest, key: string): string | undefined {
+    const value = req.queryParams.find(item => item.key === key)?.value
+    if (!value || value.indexOf("%") < 0) return value
+    try {
+      return decodeURIComponent(value)
+    } catch {
+      return value
+    }
+  }
+
+  private uploadTaskForRequest(req: HttpRequest): UploadTask | undefined {
+    const id = this.queryValue(req, "id") ?? ""
+    const clientId = headerValue(req.headers, "x-client-id") ?? ""
+    const task = this.uploadTasks.get(id)
+    return task?.clientId === clientId ? task : undefined
+  }
+
+  private removeUploadTask(task: UploadTask) {
+    this.uploadTasks.delete(task.id)
+    try {
+      if (FileManager.existsSync(task.tempPath)) FileManager.removeSync(task.tempPath)
+    } catch {}
+  }
+
+  private uploadError(error: unknown): HttpResponse {
+    return this.jsonResponse(500, "Internal Server Error", { ok: false, error: String(error) })
+  }
+
   private jsonResponse(status: number, phrase: string, value: unknown, extraHeaders: Record<string, string> = {}): HttpResponse {
     return HttpResponse.raw(status, phrase, {
       headers: {
@@ -903,6 +1020,7 @@ export class Share {
     this.pendingOutgoingPaths = []
     this.pairAttempts.clear()
     this.authorizedClients.clear()
+    this.uploadTasks.clear()
     this.sessionClients.clear()
     this.sessionLastSeen.clear()
     this.inbox = []
