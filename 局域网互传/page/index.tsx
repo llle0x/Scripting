@@ -5,6 +5,7 @@ import {
   Menu,
   Navigation,
   NavigationStack,
+  Path,
   QRImage,
   Rectangle,
   ScrollView,
@@ -27,6 +28,7 @@ import type { AppEvent, ChatMessage } from "../types"
 
 const pageColor = { light: "#ffffff", dark: "#000000" } as const
 const barColor = { light: "#f2f2f7", dark: "#1c1c1e" } as const
+const MAX_MESSAGE_HISTORY = 500
 
 export function ChatPage() {
   const dismiss = Navigation.useDismiss()
@@ -37,8 +39,17 @@ export function ChatPage() {
   const sheetKind = useObservable<"qr" | "settings">("qr")
   const settingsRevision = useObservable<number>(0)
   const clipboardToast = useObservable<boolean>(false)
+  const toastMessage = useObservable<string>("该剪贴板内容已发送")
   const keyboardVisible = useKeyboardVisible()
   const proxyRef = useRef<ScrollViewProxy | null>(null)
+  const appendMessages = (next: ChatMessage[]) => {
+    if (next.length === 0) return
+    messages.setValue([...messages.value, ...next].slice(-MAX_MESSAGE_HISTORY))
+  }
+  const showToast = (message: string) => {
+    toastMessage.setValue(message)
+    clipboardToast.setValue(true)
+  }
 
   // 绑定服务端事件：状态 + 收到的消息
   useEffect(() => {
@@ -48,8 +59,7 @@ export function ChatPage() {
       }
       else if (e.type === "connection") {
         const timestamp = Date.now()
-        messages.setValue([
-          ...messages.value,
+        appendMessages([
           {
             id: `connection-${timestamp}-${e.online ? "online" : "offline"}`,
             ts: timestamp,
@@ -59,7 +69,7 @@ export function ChatPage() {
           },
         ])
       }
-      else if (e.type === "incoming" || e.type === "outgoing") messages.setValue([...messages.value, e.message])
+      else if (e.type === "incoming" || e.type === "outgoing") appendMessages([e.message])
     })
     return () => share.setListener(null)
   }, [])
@@ -72,7 +82,7 @@ export function ChatPage() {
       if (disposed) return
       const events = share.drainInbox()
       const queued = events.flatMap((e) => (e.type === "incoming" || e.type === "outgoing" ? [e.message] : []))
-      if (queued.length > 0) messages.setValue([...messages.value, ...queued])
+      appendMessages(queued)
       timer = setTimeout(tick, 500)
     }
     timer = setTimeout(tick, 500)
@@ -91,14 +101,18 @@ export function ChatPage() {
 
   async function sendFiles(paths: string[]) {
     if (paths.length === 0) return
-    const msgs = await share.sendFiles(paths)
-    if (msgs.length) messages.setValue([...messages.value, ...msgs])
+    try {
+      appendMessages(await share.sendFiles(paths))
+    } catch (error) {
+      showToast(`文件发送失败：${String(error)}`)
+    }
   }
 
   function sendText() {
     const t = input.value.trim()
     if (!t) return
-    messages.setValue([...messages.value, share.sendText(t)])
+    appendMessages([share.sendText(t)])
+    if (!online.value) showToast("暂无连接，文本将在设备连接后补发")
     input.setValue("")
   }
 
@@ -116,29 +130,43 @@ export function ChatPage() {
   }
 
   async function onPasteClipboard() {
-    const changeCount = await Pasteboard.changeCount
-    if (changeCount === share.clipboardChangeCount) {
-      clipboardToast.setValue(true)
-      return
-    }
-    if (await Pasteboard.hasImages) {
-      const images = await Pasteboard.getImages()
-      const paths: string[] = []
-      for (const image of images ?? []) {
-        const data = image.toPNGData()
-        if (!data) continue
-        const path = Path.join(FileManager.temporaryDirectory, `粘贴图片-${Date.now()}-${paths.length + 1}.png`)
-        FileManager.writeAsDataSync(path, data)
-        paths.push(path)
+    try {
+      const changeCount = await Pasteboard.changeCount
+      if (changeCount === share.clipboardChangeCount) {
+        showToast("该剪贴板内容已发送")
+        return
       }
-      if (paths.length > 0) await share.sendPastedFiles(paths)
+      if (await Pasteboard.hasImages) {
+        const images = await Pasteboard.getImages()
+        const paths: string[] = []
+        for (const image of images ?? []) {
+          const data = image.toPNGData()
+          if (!data) continue
+          const path = Path.join(FileManager.temporaryDirectory, `粘贴图片-${Date.now()}-${paths.length + 1}.png`)
+          FileManager.writeAsDataSync(path, data)
+          paths.push(path)
+        }
+        if (paths.length === 0) {
+          showToast("剪贴板中没有可发送的图片")
+          return
+        }
+        await share.sendPastedFiles(paths)
+        share.markClipboardHandled(changeCount)
+        if (!online.value) showToast("暂无连接，图片将在设备连接后补发")
+        return
+      }
+      const text = await Pasteboard.getString()
+      const value = text?.slice(0, 100_000).trim()
+      if (!value) {
+        showToast("剪贴板中没有可发送内容")
+        return
+      }
+      share.sendPastedText(value)
       share.markClipboardHandled(changeCount)
-      return
+      if (!online.value) showToast("暂无连接，文本将在设备连接后补发")
+    } catch (error) {
+      showToast(`读取剪贴板失败：${String(error)}`)
     }
-    const text = await Pasteboard.getString()
-    const value = text?.slice(0, 100_000).trim()
-    if (value) share.sendPastedText(value)
-    share.markClipboardHandled(changeCount)
   }
 
   // 从相册选取图片/视频，逐项读出并复制到沙盒后返回文件路径
@@ -179,7 +207,7 @@ export function ChatPage() {
       }}
       toast={{
         isPresented: clipboardToast,
-        message: "该剪贴板内容已发送",
+        message: toastMessage.value,
         duration: 2,
         position: "bottom",
         backgroundColor: "label",

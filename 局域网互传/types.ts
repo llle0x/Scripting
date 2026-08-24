@@ -44,7 +44,6 @@ export type IncomingPacket =
 
 /** HTTPS/WS 服务端→浏览器广播的包 */
 export type Broadcast =
-  | { type: "status"; peer: Peer; online: boolean }
   | { role: "app"; type: "text"; text: string; id: string; ts: number }
   | { role: "app"; type: "file"; fileName: string; fileSize: number; mime?: string; url: string; id: string; ts: number }
 

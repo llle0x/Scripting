@@ -116,8 +116,19 @@ var authToken = sessionStorage.getItem('lan-transfer-token') || '';
 var clientId = sessionStorage.getItem('lan-transfer-client-id') || '';
 var resuming = false;
 var seenMessageIds = Object.create(null);
+var seenMessageOrder = [];
 var recentClipboardSignatures = Object.create(null);
 var recentClipboardOrder = [];
+var MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+var MAX_BROWSER_MESSAGES = 500;
+
+function markMessageSeen(id){
+  if (!id || seenMessageIds[id]) return false;
+  seenMessageIds[id] = true;
+  seenMessageOrder.push(id);
+  if (seenMessageOrder.length > MAX_BROWSER_MESSAGES) delete seenMessageIds[seenMessageOrder.shift()];
+  return true;
+}
 
 function showClipboardHint(text){
   clipboardHintEl.textContent = text;
@@ -126,17 +137,21 @@ function showClipboardHint(text){
   clipboardHintTimer = setTimeout(function(){ clipboardHintEl.classList.remove('show'); }, 2200);
 }
 
-function markNewClipboard(signature){
-  if (recentClipboardSignatures[signature]) return false;
+function isNewClipboard(signature){ return !recentClipboardSignatures[signature]; }
+function rememberClipboard(signature){
+  if (!isNewClipboard(signature)) return false;
   recentClipboardSignatures[signature] = true;
   recentClipboardOrder.push(signature);
   if (recentClipboardOrder.length > 50) delete recentClipboardSignatures[recentClipboardOrder.shift()];
   return true;
 }
 async function blobSignature(blob){
-  var bytes = new Uint8Array(await blob.arrayBuffer());
+  var sampleSize = 64 * 1024;
+  var head = new Uint8Array(await blob.slice(0, sampleSize).arrayBuffer());
+  var tail = blob.size > sampleSize ? new Uint8Array(await blob.slice(Math.max(sampleSize, blob.size - sampleSize)).arrayBuffer()) : new Uint8Array(0);
   var hash = 2166136261;
-  for (var i = 0; i < bytes.length; i++) hash = Math.imul(hash ^ bytes[i], 16777619) >>> 0;
+  for (var i = 0; i < head.length; i++) hash = Math.imul(hash ^ head[i], 16777619) >>> 0;
+  for (var j = 0; j < tail.length; j++) hash = Math.imul(hash ^ tail[j], 16777619) >>> 0;
   return 'file:' + (blob.type || '') + ':' + blob.size + ':' + hash;
 }
 
@@ -227,9 +242,7 @@ function addMessage(m){
   var wrap = document.createElement('div');
   wrap.className = 'msg ' + (m.role === 'browser' ? 'me' : 'other');
   var inner = '';
-  if (m.kind === 'clipboard'){
-    inner = '<div class="bubble clipboard"><div class="clipboard-source">来自 ' + esc(m.deviceName || '其他设备') + '</div><div>' + esc(m.text || '') + '</div>' + textActions(m.text || '') + '</div>';
-  } else if (m.kind === 'text'){
+  if (m.kind === 'text'){
     inner = '<div class="bubble text"><div>' + esc(m.text || '') + '</div>' + textActions(m.text || '') + '</div>';
   } else if (isImage(m.mime)){
     inner = '<div class="bubble file image"><img src="' + esc(m.url || '') + '" alt="' + esc(m.fileName || '') + '"><div class="meta">' + esc(m.fileName || '图片') + ' · ' + fmtSize(m.fileSize) + '</div><div class="image-actions"><button class="text-action image-copy" type="button">' + imageCopyLabel() + '</button><a class="text-action" href="' + esc(m.url || '') + '" target="_blank" rel="noopener noreferrer">打开</a><a class="text-action" href="' + esc(m.url || '') + '" download="' + esc(m.fileName || '图片') + '">下载原图</a></div></div>';
@@ -247,6 +260,13 @@ function addMessage(m){
   var previewEl = wrap.querySelector('.file-preview');
   if (previewBtn && previewEl) previewBtn.onclick = function(){ toggleFilePreview(m, previewEl, previewBtn); };
   messagesEl.appendChild(wrap);
+  while (messagesEl.children.length > MAX_BROWSER_MESSAGES){
+    var oldest = messagesEl.firstElementChild;
+    if (!oldest) break;
+    var localImage = oldest.querySelector('img[src^="blob:"]');
+    if (localImage) URL.revokeObjectURL(localImage.src);
+    oldest.remove();
+  }
   wrap.scrollIntoView({ behavior: 'smooth' });
 }
 
@@ -285,13 +305,11 @@ function handleIncoming(raw){
     resumeTrusted(true);
   }
   else if (p.role === 'app' && p.type === 'text'){
-    if (p.id && seenMessageIds[p.id]) return;
-    if (p.id) seenMessageIds[p.id] = true;
+    if (p.id && !markMessageSeen(p.id)) return;
     addMessage({ role: 'app', kind: 'text', text: p.text });
   }
   else if (p.role === 'app' && p.type === 'file'){
-    if (p.id && seenMessageIds[p.id]) return;
-    if (p.id) seenMessageIds[p.id] = true;
+    if (p.id && !markMessageSeen(p.id)) return;
     addMessage({ role: 'app', kind: 'file', fileName: p.fileName, fileSize: p.fileSize, mime: p.mime, url: location.origin + p.url });
   }
 }
@@ -381,7 +399,8 @@ function authorizedFetch(url, options){
 
 function sendText(){
   var t = textInput.value.trim();
-  if (!t || !ws || ws.readyState !== 1) return;
+  if (!t) return;
+  if (!wsAuthenticated || !ws || ws.readyState !== 1){ showClipboardHint('设备尚未连接'); return; }
   var id = Math.random().toString(36).slice(2) + Date.now().toString(36);
   ws.send(JSON.stringify({ type: 'text', text: t, id: id, ts: Date.now() }));
   addMessage({ role: 'browser', kind: 'text', text: t });
@@ -390,9 +409,11 @@ function sendText(){
 function sendClipboard(text){
   text = String(text || '').slice(0, 100000);
   if (!text || !wsAuthenticated || !ws || ws.readyState !== 1) return false;
-  if (!markNewClipboard('text:' + text)) return false;
+  var signature = 'text:' + text;
+  if (!isNewClipboard(signature)) return false;
   var id = Math.random().toString(36).slice(2) + Date.now().toString(36);
   ws.send(JSON.stringify({ type: 'clipboard', text: text, id: id, ts: Date.now() }));
+  rememberClipboard(signature);
   addMessage({ role: 'browser', kind: 'text', text: text });
   return true;
 }
@@ -407,10 +428,13 @@ async function syncBrowserClipboard(){
         var imageType = item.types.find(function(type){ return type.indexOf('image/') === 0; });
         if (imageType){
           var blob = await item.getType(imageType);
-          if (!markNewClipboard(await blobSignature(blob))) continue;
+          var signature = await blobSignature(blob);
+          if (!isNewClipboard(signature)) continue;
           var ext = imageType.split('/')[1].replace('jpeg', 'jpg') || 'png';
-          uploadFile(new File([blob], '剪贴板-' + Date.now() + '.' + ext, { type: imageType }));
-          sent++;
+          if (await uploadFile(new File([blob], '剪贴板-' + Date.now() + '.' + ext, { type: imageType }))) {
+            rememberClipboard(signature);
+            sent++;
+          }
           continue;
         }
         if (item.types.indexOf('text/plain') >= 0){
@@ -445,7 +469,8 @@ document.addEventListener('paste', async function(e){
   if (files.length){
     e.preventDefault();
     for (var i = 0; i < files.length; i++){
-      if (markNewClipboard(await blobSignature(files[i]))) uploadFile(files[i]);
+      var signature = await blobSignature(files[i]);
+      if (isNewClipboard(signature) && await uploadFile(files[i])) rememberClipboard(signature);
     }
     return;
   }
@@ -459,7 +484,7 @@ attachBtn.onclick = function(){ fileInput.click(); };
 fileInput.onchange = function(){
   var files = Array.prototype.slice.call(fileInput.files || []);
   fileInput.value = '';
-  files.forEach(uploadFile);
+  files.forEach(function(file){ void uploadFile(file); });
 };
 var dragDepth = 0;
 document.addEventListener('dragenter', function(e){
@@ -481,15 +506,25 @@ document.addEventListener('drop', function(e){
   dragDepth = 0;
   document.body.classList.remove('dragging');
   var files = Array.prototype.slice.call((e.dataTransfer && e.dataTransfer.files) || []);
-  files.forEach(uploadFile);
+  files.forEach(function(file){ void uploadFile(file); });
 });
-function uploadFile(file){
-  addMessage({ role: 'browser', kind: 'file', fileName: file.name, fileSize: file.size, mime: file.type, url: URL.createObjectURL(file) });
-  authorizedFetch('/upload?name=' + encodeURIComponent(file.name || '未命名'), {
-    method: 'POST',
-    headers: { 'content-type': file.type || 'application/octet-stream' },
-    body: file
-  }).catch(function(){});
+async function uploadFile(file){
+  if (!authToken || !clientId){ showClipboardHint('请先完成配对'); return false; }
+  if (file.size > MAX_UPLOAD_BYTES){ showClipboardHint('文件超过 50 MB，无法发送'); return false; }
+  showClipboardHint('正在发送：' + (file.name || '未命名'));
+  try {
+    await authorizedFetch('/upload?name=' + encodeURIComponent(file.name || '未命名'), {
+      method: 'POST',
+      headers: { 'content-type': file.type || 'application/octet-stream' },
+      body: file
+    });
+    addMessage({ role: 'browser', kind: 'file', fileName: file.name, fileSize: file.size, mime: file.type, url: URL.createObjectURL(file) });
+    showClipboardHint('发送成功：' + (file.name || '未命名'));
+    return true;
+  } catch (error){
+    showClipboardHint('发送失败：' + (file.name || '未命名'));
+    return false;
+  }
 }
 
 if (authToken && clientId){ document.body.classList.add('paired'); connect(); }

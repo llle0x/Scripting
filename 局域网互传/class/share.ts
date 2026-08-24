@@ -29,6 +29,10 @@ type ClientInfo = { clientId: string; name: string; note?: string; address: stri
 const TRUSTED_DEVICES_KEY = "lan-transfer.trustedDevices"
 const AUTO_CLIPBOARD_KEY = "lan-transfer.autoClipboardOnForeground"
 const MAX_TRUSTED_DEVICES = 20
+const PREFERRED_PORT = 8080
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+const MAX_OUTGOING_HISTORY = 100
+const MAX_INBOX_EVENTS = 500
 const HEARTBEAT_INTERVAL = 5_000
 const HEARTBEAT_TIMEOUT = 15_000
 const EXTENSIONLESS_TEXT_NAMES = new Set(["license", "copying", "notice", "readme", "changelog", "authors", "contributors", "makefile", "dockerfile"])
@@ -123,7 +127,7 @@ export class Share {
   private server = new HttpServer()
   private sessions: WebSocketSession[] = []
   private downloads = new Map<string, { path: string; key: string }>()
-  private outgoingFiles: Extract<Broadcast, { type: "file" }>[] = []
+  private outgoingHistory: Broadcast[] = []
   private pendingOutgoingPaths: string[] = []
   private temporaryOutgoingPaths = new Set<string>()
   private flushingOutgoing = false
@@ -158,6 +162,19 @@ export class Share {
 
   private emit(e: AppEvent) {
     this.listener?.(e)
+  }
+
+  private enqueueInbox(event: AppEvent) {
+    this.inbox.push(event)
+    if (this.inbox.length > MAX_INBOX_EVENTS) this.inbox.splice(0, this.inbox.length - MAX_INBOX_EVENTS)
+  }
+
+  private rememberOutgoing(packet: Broadcast) {
+    this.outgoingHistory.push(packet)
+    while (this.outgoingHistory.length > MAX_OUTGOING_HISTORY) {
+      const removed = this.outgoingHistory.shift()
+      if (removed?.type === "file") this.downloads.delete(removed.id)
+    }
   }
 
   setActivityStateListener(fn: (() => void) | null) {
@@ -208,8 +225,14 @@ export class Share {
 
   private broadcast(packet: Broadcast, excluded?: WebSocketSession) {
     const text = JSON.stringify(packet)
-    for (const session of this.sessions) {
-      if (session !== excluded) session.writeText(text)
+    for (const session of [...this.sessions]) {
+      if (session === excluded) continue
+      try {
+        session.writeText(text)
+      } catch {
+        try { session.close() } catch {}
+        this.removeSession(session)
+      }
     }
   }
 
@@ -221,7 +244,7 @@ export class Share {
     this.sentCount = 0
     this.receivedCount = 0
     this.downloads.clear()
-    this.outgoingFiles = []
+    this.outgoingHistory = []
     this.pendingOutgoingPaths = []
     this.temporaryOutgoingPaths.clear()
     this.pairAttempts.clear()
@@ -229,10 +252,18 @@ export class Share {
     await FileManager.createDirectory(this.uploadDir, true)
 
     this.server = new HttpServer()
-    let error = this.server.start({ port: 66666 })
+    let error = this.server.start({
+      port: PREFERRED_PORT,
+      forceIPv4: true,
+      maxRequestBodySize: MAX_UPLOAD_BYTES,
+    })
     if (error) {
       this.server = new HttpServer()
-      error = this.server.start({ port: 0 })
+      error = this.server.start({
+        port: 0,
+        forceIPv4: true,
+        maxRequestBodySize: MAX_UPLOAD_BYTES,
+      })
     }
     if (error) throw new Error(`HTTP 服务启动失败：${error}`)
     this.port = this.server.port
@@ -359,13 +390,7 @@ export class Share {
           } catch {}
         }
         const dest = this.uniquePath(this.sanitizeName(qname ?? "未命名"))
-        const b64 = req.body.toBase64String()
-        if (b64 === "") FileManager.writeAsStringSync(dest, "")
-        else {
-          const data = Data.fromBase64String(b64)
-          if (!data) throw new Error("上传数据读取失败")
-          FileManager.writeAsDataSync(dest, data)
-        }
+        FileManager.writeAsDataSync(dest, req.body)
         const stat = FileManager.statSync(dest)
         const client = this.authorizedClients.get(headerValue(req.headers, "x-client-id") ?? "")
         const message: ChatMessage = {
@@ -380,7 +405,7 @@ export class Share {
           deviceName: clientDisplayName(client),
           address: client?.address ?? req.address ?? undefined,
         }
-        this.inbox.push({ type: "incoming", message })
+        this.enqueueInbox({ type: "incoming", message })
         this.receivedCount++
         this.notifyActivityStateChanged()
         void this.notifyIncomingFile(message)
@@ -476,7 +501,7 @@ export class Share {
       this.sessionLastSeen.set(session, Date.now())
       session.writeText(JSON.stringify({ type: "auth_ok" }))
       // 补发本次运行期已注册的文件，使稍后连接的浏览器也能看到并下载。
-      for (const packet of this.outgoingFiles) session.writeText(JSON.stringify(packet))
+      for (const packet of this.outgoingHistory) session.writeText(JSON.stringify(packet))
       this.setOnline(true, client)
       this.emitConnection(true, client)
       void this.flushPendingFiles()
@@ -538,7 +563,7 @@ export class Share {
         threadIdentifier: "lan-transfer-clipboard",
       })
     } catch (error) {
-      this.inbox.push({
+      this.enqueueInbox({
         type: "incoming",
         message: {
           id: uid(),
@@ -582,7 +607,9 @@ export class Share {
   sendText(text: string): ChatMessage {
     const id = uid()
     const ts = Date.now()
-    this.broadcast({ role: "app", type: "text", text, id, ts })
+    const packet: Extract<Broadcast, { type: "text" }> = { role: "app", type: "text", text, id, ts }
+    this.rememberOutgoing(packet)
+    this.broadcast(packet)
     this.sentCount++
     this.notifyActivityStateChanged()
     return { id, ts, role: "app", kind: "text", text }
@@ -590,7 +617,7 @@ export class Share {
 
   /** 前台恢复或手动粘贴时发送，并交给页面队列显示。 */
   sendPastedText(text: string) {
-    this.inbox.push({ type: "outgoing", message: this.sendText(text) })
+    this.enqueueInbox({ type: "outgoing", message: this.sendText(text) })
   }
 
   /** App 端发送若干文件：注册下载路由并广播 */
@@ -624,7 +651,7 @@ export class Share {
         id,
         ts,
       }
-      this.outgoingFiles.push(packet)
+      this.rememberOutgoing(packet)
       this.broadcast(packet)
       this.sentCount++
       this.notifyActivityStateChanged()
@@ -637,7 +664,7 @@ export class Share {
   async sendPastedFiles(paths: string[]) {
     for (const path of paths) this.temporaryOutgoingPaths.add(path)
     const messages = await this.sendFiles(paths)
-    for (const message of messages) this.inbox.push({ type: "outgoing", message })
+    for (const message of messages) this.enqueueInbox({ type: "outgoing", message })
   }
 
   /** 分享表单文件进入当前服务器队列；已有连接时立即发送，否则等待首台浏览器。 */
@@ -677,10 +704,6 @@ export class Share {
 
   get pairingCode(): string {
     return this.pairCode
-  }
-
-  get trustedDeviceCount(): number {
-    return this.trustedDevices.length
   }
 
   get trustedDeviceList() {
@@ -876,7 +899,7 @@ export class Share {
     this.server.stop()
     this.sessions = []
     this.downloads.clear()
-    this.outgoingFiles = []
+    this.outgoingHistory = []
     this.pendingOutgoingPaths = []
     this.pairAttempts.clear()
     this.authorizedClients.clear()

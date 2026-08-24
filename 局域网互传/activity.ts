@@ -8,8 +8,9 @@ import {
 
 const ACTIVITY_ID_KEY = "lanTransfer.activityId"
 const ACTIVITY_OWNER_KEY = "lanTransfer.activityOwner"
-const UPDATE_INTERVAL = 1_000
-const BACKGROUND_UPDATE_INTERVAL = 1_000
+// 连接变化由 Share 事件立即触发；定时器只承担状态校准兜底，避免每秒空轮询。
+const UPDATE_INTERVAL = 5_000
+const BACKGROUND_UPDATE_INTERVAL = 5_000
 const STALE_INTERVAL = 60 * 60 * 1_000
 const ACTIVITY_ID_DISCOVERY_ATTEMPTS = 8
 const ACTIVITY_ID_DISCOVERY_DELAY = 200
@@ -23,6 +24,8 @@ export class TransferActivityController {
   private lastDeviceCount = 0
   private foreground = true
   private forceNextUpdate = false
+  private updating = false
+  private pendingImmediateUpdate = false
   private readonly ownerToken = `${Date.now()}-${Math.random()}`
 
   private state(): TransferActivityState {
@@ -72,7 +75,7 @@ export class TransferActivityController {
     const state = this.state()
     this.lastState = restored ? "" : JSON.stringify(state)
     this.lastDeviceCount = state.deviceCount
-    share.setActivityStateListener(null)
+    share.setActivityStateListener(() => this.requestImmediateUpdate())
     this.scheduleUpdate()
     return true
   }
@@ -154,7 +157,14 @@ export class TransferActivityController {
     if (this.activity) this.scheduleUpdate(foreground ? 0 : BACKGROUND_UPDATE_INTERVAL)
   }
 
+  private requestImmediateUpdate() {
+    this.forceNextUpdate = true
+    this.pendingImmediateUpdate = true
+    if (!this.updating) this.scheduleUpdate(0)
+  }
+
   private scheduleUpdate(delay?: number) {
+    if (this.timer != null) clearTimeout(this.timer)
     const wait = delay ?? (this.foreground ? UPDATE_INTERVAL : BACKGROUND_UPDATE_INTERVAL)
     this.timer = setTimeout(() => {
       this.timer = null
@@ -163,6 +173,10 @@ export class TransferActivityController {
   }
 
   private async updateActivity() {
+    if (this.updating) {
+      this.pendingImmediateUpdate = true
+      return
+    }
     if (!this.isOwner()) return
     const activity = this.activity
     if (!activity) return
@@ -177,6 +191,8 @@ export class TransferActivityController {
       console.warn(`实时活动不可更新：${currentState}`)
       return
     }
+    this.updating = true
+    this.pendingImmediateUpdate = false
     const previousDeviceCount = this.lastDeviceCount
     const relevanceScore = state.online ? 90 : 80
     try {
@@ -204,7 +220,8 @@ export class TransferActivityController {
       console.warn(`实时活动更新失败：${String(error)}`)
       await this.handleRejectedUpdate(activity)
     } finally {
-      if (this.activity === activity) this.scheduleUpdate()
+      this.updating = false
+      if (this.activity === activity) this.scheduleUpdate(this.pendingImmediateUpdate ? 0 : undefined)
     }
   }
 
