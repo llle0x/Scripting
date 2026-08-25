@@ -142,9 +142,9 @@ function EmptyWidget() {
       frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
     >
       <Image systemName="square.grid.2x2.fill" font="title" foregroundStyle="#5B7CFA" />
-      <Text font="headline" fontWeight="bold">脚本启动器</Text>
+      <Text font="headline" fontWeight="bold">脚本启动台</Text>
       <Text font="caption" foregroundStyle="secondaryLabel">
-        请先在 Scripting 中运行“脚本管理器”并添加脚本。
+        请先在 Scripting 中运行“脚本启动台”并添加脚本。
       </Text>
       <Spacer />
     </VStack>
