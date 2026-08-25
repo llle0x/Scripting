@@ -191,7 +191,7 @@ function ManagerPage() {
   return (
     <NavigationStack>
       <List
-        navigationTitle="脚本管理器"
+        navigationTitle="脚本启动台"
         navigationBarTitleDisplayMode="inline"
         toolbar={{
           primaryAction: <Button
