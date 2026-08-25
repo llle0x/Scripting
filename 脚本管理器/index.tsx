@@ -222,7 +222,7 @@ function ManagerPage() {
 
         <Section title="小组件预览">
           <Button
-            title="预览 Small（单列启动条，最多 6 个）"
+            title="预览 Small（单列自适应，最多 6 个）"
             systemImage="square"
             action={() => { void preview("systemSmall") }}
           />

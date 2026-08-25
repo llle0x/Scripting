@@ -95,8 +95,11 @@ function EmptyTile() {
 
 function ScriptGrid(props: { items: ManagedScript[] }) {
   const columns = columnCount()
+  const slotCount = Widget.family === "systemSmall"
+    ? props.items.length
+    : capacity()
   const rows: ManagedScript[][] = []
-  for (let index = 0; index < capacity(); index += columns) {
+  for (let index = 0; index < slotCount; index += columns) {
     rows.push(props.items.slice(index, index + columns))
   }
 
