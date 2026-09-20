@@ -49,6 +49,7 @@ const MAX_OUTGOING_HISTORY = 100
 const MAX_INBOX_EVENTS = 500
 const HEARTBEAT_INTERVAL = 5_000
 const HEARTBEAT_TIMEOUT = 15_000
+const MAX_FILE_NAME_LENGTH = 240
 const EXTENSIONLESS_TEXT_NAMES = new Set(["license", "copying", "notice", "readme", "changelog", "authors", "contributors", "makefile", "dockerfile"])
 
 const clientDisplayName = (client?: ClientInfo) => client?.note?.trim() || client?.name
@@ -143,6 +144,7 @@ export class Share {
   private downloads = new Map<string, { path: string; key: string }>()
   private outgoingHistory: Broadcast[] = []
   private pendingOutgoingPaths: string[] = []
+  private knownOutgoingPaths = new Set<string>()
   private temporaryOutgoingPaths = new Set<string>()
   private flushingOutgoing = false
   private pairAttempts = new Map<string, PairAttempt>()
@@ -261,6 +263,7 @@ export class Share {
     this.downloads.clear()
     this.outgoingHistory = []
     this.pendingOutgoingPaths = []
+    this.knownOutgoingPaths.clear()
     this.temporaryOutgoingPaths.clear()
     this.pairAttempts.clear()
     this.uploadTasks.clear()
@@ -607,8 +610,8 @@ export class Share {
       this.emit({
         type: "incoming",
         message: {
-          id: packet.id,
-          ts: packet.ts,
+          id: typeof packet.id === "string" && packet.id.length <= 128 ? packet.id : uid(),
+          ts: Number.isSafeInteger(packet.ts) && packet.ts > 0 ? packet.ts : Date.now(),
           role: "browser",
           kind: "text",
           text,
@@ -628,8 +631,8 @@ export class Share {
       this.emit({
         type: "incoming",
         message: {
-          id: packet.id,
-          ts: packet.ts,
+          id: typeof packet.id === "string" && packet.id.length <= 128 ? packet.id : uid(),
+          ts: Number.isSafeInteger(packet.ts) && packet.ts > 0 ? packet.ts : Date.now(),
           role: "browser",
           kind: "text",
           text,
@@ -759,7 +762,8 @@ export class Share {
   /** 分享表单文件进入当前服务器队列；已有连接时立即发送，否则等待首台浏览器。 */
   queueFiles(paths: string[]) {
     for (const path of paths) {
-      if (!path || this.pendingOutgoingPaths.includes(path)) continue
+      if (!path || this.knownOutgoingPaths.has(path)) continue
+      this.knownOutgoingPaths.add(path)
       this.pendingOutgoingPaths.push(path)
       if (isStagedSharedFile(path)) this.temporaryOutgoingPaths.add(path)
     }
@@ -776,6 +780,7 @@ export class Share {
           const messages = await this.sendFiles([path])
           for (const message of messages) this.emit({ type: "outgoing", message })
         } catch (error) {
+          this.knownOutgoingPaths.delete(path)
           this.emit({
             type: "incoming",
             message: { id: uid(), ts: Date.now(), role: "system", kind: "text", text: `分享文件发送失败：${String(error)}` },
@@ -993,7 +998,11 @@ export class Share {
   }
 
   private sanitizeName(name: string): string {
-    return name.replace(/[\/\\]/g, "_").trim() || "未命名"
+    const safe = name.replace(/[\/\\\u0000-\u001f\u007f]/g, "_").trim() || "未命名"
+    if (safe.length <= MAX_FILE_NAME_LENGTH) return safe
+    const dot = safe.lastIndexOf(".")
+    const extension = dot > 0 ? safe.slice(dot, dot + 32) : ""
+    return `${safe.slice(0, MAX_FILE_NAME_LENGTH - extension.length)}${extension}`
   }
 
   private uniquePath(name: string): string {
@@ -1013,11 +1022,15 @@ export class Share {
   stop() {
     if (this.heartbeatTimer != null) clearTimeout(this.heartbeatTimer)
     this.heartbeatTimer = null
+    for (const session of [...this.sessions]) {
+      try { session.close() } catch {}
+    }
     this.server.stop()
     this.sessions = []
     this.downloads.clear()
     this.outgoingHistory = []
     this.pendingOutgoingPaths = []
+    this.knownOutgoingPaths.clear()
     this.pairAttempts.clear()
     this.authorizedClients.clear()
     this.uploadTasks.clear()

@@ -2,13 +2,27 @@ import { Path } from "scripting"
 
 const QUEUE_KEY = "lan-transfer.pending-shared-files"
 const STAGING_DIR = Path.join(FileManager.appGroupDocumentsDirectory, "lan-transfer-share-inbox")
+const STAGED_FILE_TTL = 24 * 60 * 60 * 1_000
 
 type PendingSharedFile = { path: string; createdAt: number }
 
 function readQueue(): PendingSharedFile[] {
   const value = Storage.get<PendingSharedFile[]>(QUEUE_KEY, { shared: true })
   if (!Array.isArray(value)) return []
-  return value.filter(item => item && typeof item.path === "string" && typeof item.createdAt === "number")
+  const cutoff = Date.now() - STAGED_FILE_TTL
+  const valid: PendingSharedFile[] = []
+  for (const item of value) {
+    if (!item || typeof item.path !== "string" || typeof item.createdAt !== "number") continue
+    if (item.createdAt >= cutoff) {
+      valid.push(item)
+      continue
+    }
+    try {
+      const directory = Path.dirname(item.path)
+      if (FileManager.existsSync(directory)) FileManager.removeSync(directory)
+    } catch {}
+  }
+  return valid
 }
 
 function safeName(path: string): string {
@@ -25,17 +39,26 @@ function uniqueStagingTarget(source: string): { directory: string; path: string 
 export async function stageSharedFiles(paths: string[]): Promise<number> {
   await FileManager.createDirectory(STAGING_DIR, true)
   const staged: PendingSharedFile[] = []
-  for (const source of paths) {
-    if (!source || !(await FileManager.exists(source))) continue
-    const destination = uniqueStagingTarget(source)
-    await FileManager.createDirectory(destination.directory, true)
-    await FileManager.copyFile(source, destination.path)
-    staged.push({ path: destination.path, createdAt: Date.now() })
+  const stagingDirectories: string[] = []
+  try {
+    for (const source of paths) {
+      if (!source || !(await FileManager.exists(source))) continue
+      const destination = uniqueStagingTarget(source)
+      await FileManager.createDirectory(destination.directory, true)
+      stagingDirectories.push(destination.directory)
+      await FileManager.copyFile(source, destination.path)
+      staged.push({ path: destination.path, createdAt: Date.now() })
+    }
+  } catch (error) {
+    for (const directory of stagingDirectories) {
+      try { await FileManager.remove(directory) } catch {}
+    }
+    throw new Error(`暂存分享文件失败：${String(error)}`)
   }
   if (staged.length === 0) return 0
   if (!Storage.set(QUEUE_KEY, [...readQueue(), ...staged], { shared: true })) {
-    for (const item of staged) {
-      try { await FileManager.remove(item.path) } catch {}
+    for (const directory of stagingDirectories) {
+      try { await FileManager.remove(directory) } catch {}
     }
     throw new Error("无法保存分享文件队列")
   }

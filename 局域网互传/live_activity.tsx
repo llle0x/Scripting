@@ -1,4 +1,5 @@
 import {
+  DateLabel,
   HStack,
   Image,
   LiveActivity,
@@ -9,7 +10,6 @@ import {
   LiveActivityUIExpandedTrailing,
   Spacer,
   Text,
-  TimerIntervalLabel,
   VStack,
 } from "scripting"
 
@@ -19,7 +19,6 @@ export type TransferActivityState = {
   online: boolean
   networkType: "wifi" | "cellular" | "offline"
   clockBase: number
-  clockEnd: number
   address: string
   pairingCode: string
   deviceCount: number
@@ -31,6 +30,25 @@ export type TransferActivityState = {
   remainingCount: number
   sent: number
   received: number
+}
+
+// 与设备时间的秒数对齐；系统负责逐秒刷新，无需每秒更新 Activity。
+// 内层提供真实排版宽度并右对齐，外层仅露出两位数字；不要使用 fixedSize。
+function Seconds({ clockBase }: { clockBase: number }) {
+  return (
+    <HStack spacing={0} frame={{ width: 19, height: 21, alignment: "trailing" }} clipped>
+      <DateLabel
+        date={new Date(clockBase - 60_000)}
+        style="timer"
+        font={15}
+        fontDesign="monospaced"
+        monospacedDigit
+        foregroundStyle="white"
+        multilineTextAlignment="trailing"
+        frame={{ width: 120, height: 21, alignment: "trailing" }}
+      />
+    </HStack>
+  )
 }
 
 function connectedTitle(state: TransferActivityState): string {
@@ -45,11 +63,6 @@ function connectedSummary(state: TransferActivityState): string {
 
 function StatusIcon({ online }: { online: boolean }) {
   return <Image systemName={online ? "link.circle.fill" : "wifi"} foregroundStyle={online ? "systemGreen" : "systemBlue"} />
-}
-
-function NetworkIcon({ type }: { type: TransferActivityState["networkType"] }) {
-  const systemName = type === "cellular" ? "cellularbars" : type === "wifi" ? "wifi" : "wifi.slash"
-  return <Image systemName={systemName} font={12} foregroundStyle={type === "offline" ? "secondaryLabel" : "systemBlue"} />
 }
 
 function LockScreenContent(state: TransferActivityState) {
@@ -74,50 +87,44 @@ function LockScreenContent(state: TransferActivityState) {
 const builder: LiveActivityUIBuilder<TransferActivityState> = state => (
   <LiveActivityUI
     content={<LockScreenContent {...state} />}
-    compactLeading={
-      <HStack spacing={3}>
-        <NetworkIcon type={state.networkType} />
-        <Text font={12} fontWeight="semibold">
-          {state.deviceCount > 0 ? `${state.deviceCount}台` : "等待"}
-        </Text>
-      </HStack>
-    }
-    compactTrailing={
-      <TimerIntervalLabel
-        from={new Date(state.clockBase)}
-        to={new Date(state.clockEnd)}
-        countsDown={false}
-        showsHours
-        font={12}
-        monospacedDigit
-        lineLimit={1}
-        frame={{ width: 55, alignment: "center" }}
-      />
-    }
-    minimal={<StatusIcon online={state.deviceCount > 0} />}>
+    compactLeading={<Seconds clockBase={state.clockBase} />}
+    compactTrailing={<Text frame={{ width: 0, height: 0 }}>{""}</Text>}
+    minimal={<Seconds clockBase={state.clockBase} />}>
     <LiveActivityUIExpandedLeading>
-      <HStack spacing={7}>
-        <StatusIcon online={state.deviceCount > 0} />
-        <Text font="headline" fontWeight="semibold">{state.deviceCount > 0 ? "已连接" : "等待连接"}</Text>
+      <HStack spacing={6}>
+        <Image
+          systemName={state.deviceCount > 0 ? "link" : state.networkType === "offline" ? "wifi.slash" : "wifi"}
+          font={14}
+          foregroundStyle={state.deviceCount > 0 ? "systemGreen" : "systemBlue"}
+        />
+        <Text font={14} fontWeight="semibold" foregroundStyle="white" lineLimit={1}>
+          {state.deviceCount > 0 ? `${state.deviceCount} 台已连接` : "等待连接"}
+        </Text>
       </HStack>
     </LiveActivityUIExpandedLeading>
     <LiveActivityUIExpandedTrailing>
-      <Text font="headline" fontWeight="bold" monospacedDigit>{state.pairingCode}</Text>
+      <HStack spacing={5}>
+        <Text font={10} foregroundStyle="rgba(255,255,255,0.50)">配对码</Text>
+        <Text font={17} fontWeight="semibold" foregroundStyle="white" monospacedDigit>{state.pairingCode}</Text>
+      </HStack>
     </LiveActivityUIExpandedTrailing>
     <LiveActivityUIExpandedBottom>
-      <VStack alignment="leading" spacing={5}>
-        {state.deviceCount === 0
-          ? <Text font="caption" lineLimit={1}>{state.address}</Text>
-          : <Text font="caption" lineLimit={1}>{state.client1}</Text>}
-        {state.client2 ? <Text font="caption" lineLimit={1}>{state.client2}</Text> : null}
-        {state.client3 ? <Text font="caption" lineLimit={1}>{state.client3}</Text> : null}
+      <VStack alignment="leading" spacing={7} foregroundStyle="white">
+        <Text font={14} monospacedDigit lineLimit={1} minScaleFactor={0.7}>{state.address}</Text>
+        {state.client1 ? <Text font={11} foregroundStyle="rgba(255,255,255,0.72)" lineLimit={1}>{state.client1}</Text> : null}
+        {state.client2 ? <Text font={11} foregroundStyle="rgba(255,255,255,0.72)" lineLimit={1}>{state.client2}</Text> : null}
+        {state.client3 ? <Text font={11} foregroundStyle="rgba(255,255,255,0.72)" lineLimit={1}>{state.client3}</Text> : null}
         {state.remainingCount > 0
-          ? <Text font="caption" foregroundStyle="secondaryLabel">另有 {state.remainingCount} 台设备</Text>
+          ? <Text font={10} foregroundStyle="rgba(255,255,255,0.50)">另有 {state.remainingCount} 台设备</Text>
           : null}
-        <HStack>
-          <Text font="caption" foregroundStyle="secondaryLabel">发送 {state.sent}</Text>
+        <HStack spacing={8}>
+          <Text font={10} foregroundStyle="rgba(255,255,255,0.50)">
+            {state.networkType === "wifi" ? "Wi-Fi / 热点" : state.networkType === "cellular" ? "蜂窝网络" : "网络不可用"}
+          </Text>
           <Spacer />
-          <Text font="caption" foregroundStyle="secondaryLabel">接收 {state.received}</Text>
+          <Text font={11} foregroundStyle="rgba(255,255,255,0.65)" monospacedDigit>
+            发送 {state.sent} · 接收 {state.received}
+          </Text>
         </HStack>
       </VStack>
     </LiveActivityUIExpandedBottom>

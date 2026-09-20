@@ -10,7 +10,7 @@ const ACTIVITY_ID_KEY = "lanTransfer.activityId"
 const ACTIVITY_OWNER_KEY = "lanTransfer.activityOwner"
 // 连接变化由 Share 事件立即触发；定时器只承担状态校准兜底，避免每秒空轮询。
 const UPDATE_INTERVAL = 5_000
-const BACKGROUND_UPDATE_INTERVAL = 5_000
+const BACKGROUND_UPDATE_INTERVAL = 15_000
 const STALE_INTERVAL = 60 * 60 * 1_000
 const ACTIVITY_ID_DISCOVERY_ATTEMPTS = 8
 const ACTIVITY_ID_DISCOVERY_DELAY = 200
@@ -40,8 +40,6 @@ export class TransferActivityController {
         : "offline"
     const clockBase = new Date()
     clockBase.setHours(0, 0, 0, 0)
-    const clockEnd = new Date(clockBase)
-    clockEnd.setDate(clockEnd.getDate() + 1)
     const line = (index: number) => {
       const client = clients[index]
       return client ? `${client.name} · ${client.address}` : ""
@@ -50,7 +48,6 @@ export class TransferActivityController {
       online: snapshot.online,
       networkType,
       clockBase: clockBase.getTime(),
-      clockEnd: clockEnd.getTime(),
       address: share.link,
       pairingCode: share.pairingCode,
       deviceCount: clients.length,
