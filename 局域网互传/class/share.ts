@@ -576,7 +576,11 @@ export class Share {
   private handlePacket(session: WebSocketSession, raw: string) {
     let packet: IncomingPacket
     try {
+      if (raw.length > 700_000) throw new Error("消息过长")
       packet = JSON.parse(raw)
+      if (!packet || typeof packet !== "object" || Array.isArray(packet) || typeof packet.type !== "string") {
+        throw new Error("无效消息")
+      }
     } catch {
       if (this.sessions.indexOf(session) < 0) session.close()
       return
@@ -610,8 +614,8 @@ export class Share {
       this.emit({
         type: "incoming",
         message: {
-          id: typeof packet.id === "string" && packet.id.length <= 128 ? packet.id : uid(),
-          ts: Number.isSafeInteger(packet.ts) && packet.ts > 0 ? packet.ts : Date.now(),
+          id: uid(),
+          ts: Date.now(),
           role: "browser",
           kind: "text",
           text,
@@ -631,8 +635,8 @@ export class Share {
       this.emit({
         type: "incoming",
         message: {
-          id: typeof packet.id === "string" && packet.id.length <= 128 ? packet.id : uid(),
-          ts: Number.isSafeInteger(packet.ts) && packet.ts > 0 ? packet.ts : Date.now(),
+          id: uid(),
+          ts: Date.now(),
           role: "browser",
           kind: "text",
           text,

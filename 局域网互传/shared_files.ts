@@ -12,7 +12,8 @@ function readQueue(): PendingSharedFile[] {
   const cutoff = Date.now() - STAGED_FILE_TTL
   const valid: PendingSharedFile[] = []
   for (const item of value) {
-    if (!item || typeof item.path !== "string" || typeof item.createdAt !== "number") continue
+    if (!item || typeof item.path !== "string" || !isStagedSharedFile(item.path)
+      || !Number.isSafeInteger(item.createdAt) || item.createdAt <= 0 || item.createdAt > Date.now()) continue
     if (item.createdAt >= cutoff) {
       valid.push(item)
       continue
@@ -65,7 +66,7 @@ export async function stageSharedFiles(paths: string[]): Promise<number> {
   return staged.length
 }
 
-/** 主脚本入口/恢复：原子式取走当前队列，文件由服务器在会话结束时清理。 */
+/** 主脚本入口/恢复：取走当前队列，文件由服务器在会话结束时清理。 */
 export function claimSharedFiles(): string[] {
   const queued = readQueue()
   Storage.remove(QUEUE_KEY, { shared: true })
@@ -73,5 +74,9 @@ export function claimSharedFiles(): string[] {
 }
 
 export function isStagedSharedFile(path: string): boolean {
-  return path.startsWith(`${STAGING_DIR}/`) || path.startsWith(`${STAGING_DIR}\\`)
+  if (!path.startsWith(`${STAGING_DIR}/`)) return false
+  const parts = path.slice(STAGING_DIR.length + 1).split("/")
+  return parts.length === 2 && /^[a-z0-9]+-[a-z0-9]+$/.test(parts[0])
+    && parts[1].length > 0 && parts[1] !== "." && parts[1] !== ".."
+    && !/[\\\u0000-\u001f\u007f]/.test(parts[1])
 }

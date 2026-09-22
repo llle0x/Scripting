@@ -12,8 +12,6 @@ const ACTIVITY_OWNER_KEY = "lanTransfer.activityOwner"
 const UPDATE_INTERVAL = 5_000
 const BACKGROUND_UPDATE_INTERVAL = 15_000
 const STALE_INTERVAL = 60 * 60 * 1_000
-const ACTIVITY_ID_DISCOVERY_ATTEMPTS = 8
-const ACTIVITY_ID_DISCOVERY_DELAY = 200
 
 export class TransferActivityController {
   private activity: LiveActivity<TransferActivityState> | null = null
@@ -52,7 +50,7 @@ export class TransferActivityController {
       pairingCode: share.pairingCode,
       deviceCount: clients.length,
       primaryName: clients[0]?.name ?? "",
-      deviceSummary: clients.map(client => client.name).join("、"),
+      deviceSummary: clients.slice(0, 3).map(client => client.name).join("、"),
       client1: line(0),
       client2: line(1),
       client3: line(2),
@@ -73,7 +71,7 @@ export class TransferActivityController {
     this.lastState = restored ? "" : JSON.stringify(state)
     this.lastDeviceCount = state.deviceCount
     share.setActivityStateListener(() => this.requestImmediateUpdate())
-    this.scheduleUpdate()
+    this.scheduleUpdate(restored ? 0 : undefined)
     return true
   }
 
@@ -95,30 +93,16 @@ export class TransferActivityController {
   }
 
   private async startNewActivity(): Promise<LiveActivity<TransferActivityState> | null> {
-    const before = await LiveActivity.getAllActivitiesIds()
     const activity = LanTransferActivity()
     const state = this.state()
     if (!(await activity.start(state, { relevanceScore: state.online ? 90 : 80 }))) return null
-    const activityId = activity.activityId ?? await this.discoverNewActivityId(before)
+    const activityId = activity.activityId
     if (!activityId || !Storage.set(ACTIVITY_ID_KEY, activityId)) {
       await activity.end(state, { dismissTimeInterval: 0 })
       console.warn("实时活动已启动，但未能可靠记录活动 ID，已立即结束")
       return null
     }
     return activity
-  }
-
-  private async discoverNewActivityId(before: string[]): Promise<string | null> {
-    const known = new Set(before)
-    for (let attempt = 0; attempt < ACTIVITY_ID_DISCOVERY_ATTEMPTS; attempt += 1) {
-      const ids = await LiveActivity.getAllActivitiesIds()
-      const created = ids.find(id => !known.has(id))
-      if (created) return created
-      await new Promise<void>(resolve => {
-        setTimeout(() => resolve(), ACTIVITY_ID_DISCOVERY_DELAY)
-      })
-    }
-    return null
   }
 
   private attachActivity(activity: LiveActivity<TransferActivityState>) {
@@ -165,7 +149,10 @@ export class TransferActivityController {
     const wait = delay ?? (this.foreground ? UPDATE_INTERVAL : BACKGROUND_UPDATE_INTERVAL)
     this.timer = setTimeout(() => {
       this.timer = null
-      void this.updateActivity()
+      void this.updateActivity().catch(error => {
+        console.warn(`实时活动状态采集失败：${String(error)}`)
+        if (this.activity && this.isOwner()) this.scheduleUpdate()
+      })
     }, wait)
   }
 
@@ -206,7 +193,7 @@ export class TransferActivityController {
         return
       }
       this.lastState = serialized
-      this.forceNextUpdate = false
+      this.forceNextUpdate = this.pendingImmediateUpdate
       this.lastDeviceCount = state.deviceCount
       if (state.deviceCount !== previousDeviceCount) {
         console.log(
@@ -256,8 +243,13 @@ export class TransferActivityController {
     this.detachActivity()
     if (ownsActivity) {
       Storage.remove(ACTIVITY_OWNER_KEY)
-      Storage.remove(ACTIVITY_ID_KEY)
-      if (activity) await activity.end(this.state(), { dismissTimeInterval: 0 })
+      if (activity) {
+        if (!await activity.end(this.state(), { dismissTimeInterval: 0 })) {
+          console.warn("实时活动结束失败，保留 ID 以便下次恢复")
+          return
+        }
+        Storage.remove(ACTIVITY_ID_KEY)
+      }
     }
   }
 }

@@ -97,7 +97,7 @@ export function ChatPage() {
     const list = messages.value
     const last = list[list.length - 1]
     if (last) proxyRef.current?.scrollTo(last.id, "bottom")
-  }, [messages.value.length])
+  }, [messages.value[messages.value.length - 1]?.id])
 
   async function sendFiles(paths: string[]) {
     if (paths.length === 0) return
