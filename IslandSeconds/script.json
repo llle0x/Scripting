@@ -3,6 +3,6 @@
   "localizedNames": { "zh": "灵动岛秒数" },
   "icon": "timer",
   "color": "#007AFF",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "runInApp": true
 }

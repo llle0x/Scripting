@@ -1,7 +1,6 @@
 import {
   DateLabel, HStack, Image, LiveActivity, LiveActivityUI,
-  LiveActivityUIBuilder, LiveActivityUIExpandedLeading,
-  LiveActivityUIExpandedTrailing, LiveActivityUIExpandedBottom, Text, VStack,
+  LiveActivityUIBuilder, LiveActivityUIExpandedBottom, Text, VStack,
 } from "scripting"
 
 export const ACTIVITY_NAME = "IslandSecondsClock"
@@ -28,13 +27,24 @@ function Seconds({ origin }: ClockState) {
   )
 }
 
-function ClockDetails({ origin }: ClockState) {
+function ClockDetails({ origin, compact = false }: ClockState & { compact?: boolean }) {
   // origin is one minute before the last synchronization minute.
   const synchronized = new Date(origin + 60_000)
   const midnight = new Date(synchronized)
   midnight.setHours(0, 0, 0, 0)
   const date = `${synchronized.getFullYear()}年${synchronized.getMonth() + 1}月${synchronized.getDate()}日`
   const weekday = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"][synchronized.getDay()]
+  if (compact) {
+    return (
+      <HStack spacing={10} foregroundStyle="white">
+        <Image systemName="clock.fill" font={13} foregroundStyle="systemBlue" />
+        <DateLabel date={midnight} style="timer" font={22} fontWeight="semibold" monospacedDigit />
+        <Text font={11} foregroundStyle="rgba(255,255,255,0.70)" lineLimit={1}>
+          {`${synchronized.getMonth() + 1}/${synchronized.getDate()} ${weekday}`}
+        </Text>
+      </HStack>
+    )
+  }
   return (
     <VStack alignment="leading" spacing={8} foregroundStyle="white">
       <DateLabel date={midnight} style="timer" font={32} fontWeight="semibold" monospacedDigit
@@ -65,14 +75,8 @@ const builder: LiveActivityUIBuilder<ClockState> = state => (
     compactTrailing={<Text frame={{ width: 0, height: 0 }}>{""}</Text>}
     minimal={<Seconds {...state} />}
   >
-    <LiveActivityUIExpandedLeading>
-      <ClockTitle />
-    </LiveActivityUIExpandedLeading>
-    <LiveActivityUIExpandedTrailing>
-      <Seconds {...state} />
-    </LiveActivityUIExpandedTrailing>
     <LiveActivityUIExpandedBottom>
-      <ClockDetails {...state} />
+      <ClockDetails {...state} compact />
     </LiveActivityUIExpandedBottom>
   </LiveActivityUI>
 )
