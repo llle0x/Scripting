@@ -2,6 +2,7 @@ import { LiveActivity, Script } from "scripting"
 import { ACTIVITY_NAME, ClockState, SecondsActivity } from "./live_activity"
 
 const KEY = "island-seconds-activity-v1"
+const INTRO_KEY = "island-seconds-intro-shown-v1"
 type Saved = { id: string, origin: number }
 
 async function run() {
@@ -56,6 +57,14 @@ async function run() {
   } catch (error) {
     await activity.end(state, { dismissTimeInterval: 0 })
     throw error
+  }
+  if (Storage.get<boolean>(INTRO_KEY) !== true) {
+    await Dialog.alert({
+      title: "灵动岛秒数已开启",
+      message: "返回主屏幕后可查看灵动岛秒数，长按灵动岛可展开查看时间、日期和星期。\n\n再次运行脚本，可停止显示或重新对时。跨日、切换时区或修改系统时间后，请重新对时。",
+      buttonLabel: "知道了",
+    })
+    if (!Storage.set(INTRO_KEY, true)) console.warn("首次提示状态未保存，下次启动可能再次提示")
   }
 }
 
