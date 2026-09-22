@@ -2,7 +2,7 @@
   "name": "IslandSeconds",
   "localizedNames": { "zh": "灵动岛秒数" },
   "icon": "timer",
-  "color": "#FFFFFF",
-  "version": "1.0.1",
+  "color": "#007AFF",
+  "version": "1.0.2",
   "runInApp": true
 }

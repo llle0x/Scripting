@@ -1,6 +1,7 @@
 import {
-  DateLabel, HStack, LiveActivity, LiveActivityUI,
-  LiveActivityUIBuilder, LiveActivityUIExpandedLeading, Text,
+  DateLabel, HStack, Image, LiveActivity, LiveActivityUI,
+  LiveActivityUIBuilder, LiveActivityUIExpandedLeading,
+  LiveActivityUIExpandedTrailing, LiveActivityUIExpandedBottom, Text, VStack,
 } from "scripting"
 
 export const ACTIVITY_NAME = "IslandSecondsClock"
@@ -27,16 +28,52 @@ function Seconds({ origin }: ClockState) {
   )
 }
 
+function ClockDetails({ origin }: ClockState) {
+  // origin is one minute before the last synchronization minute.
+  const synchronized = new Date(origin + 60_000)
+  const midnight = new Date(synchronized)
+  midnight.setHours(0, 0, 0, 0)
+  const date = `${synchronized.getFullYear()}年${synchronized.getMonth() + 1}月${synchronized.getDate()}日`
+  const weekday = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"][synchronized.getDay()]
+  return (
+    <VStack alignment="leading" spacing={8} foregroundStyle="white">
+      <DateLabel date={midnight} style="timer" font={32} fontWeight="semibold" monospacedDigit
+        frame={{ maxWidth: Infinity, alignment: "leading" }} />
+      <HStack spacing={6}>
+        <Image systemName="calendar" font={12} foregroundStyle="systemBlue" />
+        <Text font={13} foregroundStyle="rgba(255,255,255,0.75)" lineLimit={1}>{date} · {weekday}</Text>
+      </HStack>
+      <Text font={10} foregroundStyle="rgba(255,255,255,0.45)">本地时间 · 跨日后请重新对时</Text>
+    </VStack>
+  )
+}
+
+function ClockTitle() {
+  return <HStack spacing={6}>
+    <Image systemName="clock.fill" font={14} foregroundStyle="systemBlue" />
+    <Text font={13} fontWeight="semibold" foregroundStyle="white">灵动岛秒数</Text>
+  </HStack>
+}
+
 const builder: LiveActivityUIBuilder<ClockState> = state => (
   <LiveActivityUI
-    content={<Seconds {...state} />}
+    content={<VStack alignment="leading" spacing={10} padding={16}>
+      <ClockTitle />
+      <ClockDetails {...state} />
+    </VStack>}
     compactLeading={<Seconds {...state} />}
     compactTrailing={<Text frame={{ width: 0, height: 0 }}>{""}</Text>}
     minimal={<Seconds {...state} />}
   >
     <LiveActivityUIExpandedLeading>
-      <Seconds {...state} />
+      <ClockTitle />
     </LiveActivityUIExpandedLeading>
+    <LiveActivityUIExpandedTrailing>
+      <Seconds {...state} />
+    </LiveActivityUIExpandedTrailing>
+    <LiveActivityUIExpandedBottom>
+      <ClockDetails {...state} />
+    </LiveActivityUIExpandedBottom>
   </LiveActivityUI>
 )
 
