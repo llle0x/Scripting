@@ -67,10 +67,9 @@ function ClockTitle() {
 
 const builder: LiveActivityUIBuilder<ClockState> = state => (
   <LiveActivityUI
-    content={<VStack alignment="leading" spacing={10} padding={16}>
-      <ClockTitle />
-      <ClockDetails {...state} />
-    </VStack>}
+    content={<HStack spacing={0} padding={10}>
+      <ClockDetails {...state} compact />
+    </HStack>}
     compactLeading={<Seconds {...state} />}
     compactTrailing={<Text frame={{ width: 0, height: 0 }}>{""}</Text>}
     minimal={<Seconds {...state} />}
