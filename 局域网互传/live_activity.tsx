@@ -62,25 +62,40 @@ function connectedSummary(state: TransferActivityState): string {
 }
 
 function StatusIcon({ online }: { online: boolean }) {
-  return <Image systemName={online ? "link.circle.fill" : "wifi"} foregroundStyle={online ? "systemGreen" : "systemBlue"} />
+  return <Image systemName={online ? "link.circle.fill" : "wifi"} foregroundStyle="systemBlue" />
+}
+
+function ClockRow({ clockBase }: { clockBase: number }) {
+  const date = new Date(clockBase)
+  const weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][date.getDay()]
+  return <HStack spacing={8} foregroundStyle="white">
+    <Image systemName="clock.fill" font={12} foregroundStyle="systemBlue" />
+    <DateLabel date={date} style="timer" font={20} fontWeight="semibold" monospacedDigit />
+    <Text font={11} foregroundStyle="rgba(255,255,255,0.65)" lineLimit={1}>
+      {`${date.getMonth() + 1}/${date.getDate()} ${weekday}`}
+    </Text>
+  </HStack>
 }
 
 function LockScreenContent(state: TransferActivityState) {
   const connected = state.deviceCount > 0
   return (
-    <HStack spacing={12} padding={16} activityBackgroundTint="rgba(12,16,24,0.96)" foregroundStyle="white">
+    <VStack alignment="leading" spacing={5} padding={10} activityBackgroundTint="rgba(12,16,24,0.96)" foregroundStyle="white">
+      <ClockRow clockBase={state.clockBase} />
+      <HStack spacing={8}>
       <StatusIcon online={connected} />
-      <VStack alignment="leading" spacing={3} frame={{ maxWidth: Infinity }}>
-        <Text font="headline" fontWeight="semibold">{connectedTitle(state)}</Text>
+      <VStack alignment="leading" spacing={2} frame={{ maxWidth: Infinity }}>
+        <Text font={12} fontWeight="semibold" lineLimit={1}>{connectedTitle(state)}</Text>
         <Text font="caption" foregroundStyle="rgba(255,255,255,0.65)" lineLimit={1}>
           {connectedSummary(state)}
         </Text>
       </VStack>
       <VStack alignment="trailing" spacing={3}>
         <Text font="caption" foregroundStyle="rgba(255,255,255,0.65)">配对码</Text>
-        <Text font="headline" fontWeight="bold" monospacedDigit>{state.pairingCode}</Text>
+        <Text font={15} fontWeight="bold" monospacedDigit>{state.pairingCode}</Text>
       </VStack>
-    </HStack>
+      </HStack>
+    </VStack>
   )
 }
 
@@ -95,7 +110,7 @@ const builder: LiveActivityUIBuilder<TransferActivityState> = state => (
         <Image
           systemName={state.deviceCount > 0 ? "link" : state.networkType === "offline" ? "wifi.slash" : "wifi"}
           font={14}
-          foregroundStyle={state.deviceCount > 0 ? "systemGreen" : "systemBlue"}
+          foregroundStyle="systemBlue"
         />
         <Text font={14} fontWeight="semibold" foregroundStyle="white" lineLimit={1}>
           {state.deviceCount > 0 ? `${state.deviceCount} 台已连接` : "等待连接"}
@@ -109,14 +124,10 @@ const builder: LiveActivityUIBuilder<TransferActivityState> = state => (
       </HStack>
     </LiveActivityUIExpandedTrailing>
     <LiveActivityUIExpandedBottom>
-      <VStack alignment="leading" spacing={7} foregroundStyle="white">
+      <VStack alignment="leading" spacing={4} foregroundStyle="white">
+        <ClockRow clockBase={state.clockBase} />
         <Text font={14} monospacedDigit lineLimit={1} minScaleFactor={0.7}>{state.address}</Text>
-        {state.client1 ? <Text font={11} foregroundStyle="rgba(255,255,255,0.72)" lineLimit={1}>{state.client1}</Text> : null}
-        {state.client2 ? <Text font={11} foregroundStyle="rgba(255,255,255,0.72)" lineLimit={1}>{state.client2}</Text> : null}
-        {state.client3 ? <Text font={11} foregroundStyle="rgba(255,255,255,0.72)" lineLimit={1}>{state.client3}</Text> : null}
-        {state.remainingCount > 0
-          ? <Text font={10} foregroundStyle="rgba(255,255,255,0.50)">另有 {state.remainingCount} 台设备</Text>
-          : null}
+        {state.deviceSummary ? <Text font={11} foregroundStyle="rgba(255,255,255,0.72)" lineLimit={1}>{state.deviceSummary}</Text> : null}
         <HStack spacing={8}>
           <Text font={10} foregroundStyle="rgba(255,255,255,0.50)">
             {state.networkType === "wifi" ? "Wi-Fi / 热点" : state.networkType === "cellular" ? "蜂窝网络" : "网络不可用"}
