@@ -5,10 +5,6 @@ import {
   LiveActivity,
   LiveActivityUI,
   LiveActivityUIBuilder,
-  LiveActivityUIExpandedBottom,
-  LiveActivityUIExpandedLeading,
-  LiveActivityUIExpandedTrailing,
-  Spacer,
   Text,
   VStack,
 } from "scripting"
@@ -105,40 +101,6 @@ const builder: LiveActivityUIBuilder<TransferActivityState> = state => (
     compactLeading={<Seconds clockBase={state.clockBase} />}
     compactTrailing={<Text frame={{ width: 0, height: 0 }}>{""}</Text>}
     minimal={<Seconds clockBase={state.clockBase} />}>
-    <LiveActivityUIExpandedLeading>
-      <HStack spacing={6}>
-        <Image
-          systemName={state.deviceCount > 0 ? "link" : state.networkType === "offline" ? "wifi.slash" : "wifi"}
-          font={14}
-          foregroundStyle="systemBlue"
-        />
-        <Text font={14} fontWeight="semibold" foregroundStyle="white" lineLimit={1}>
-          {state.deviceCount > 0 ? `${state.deviceCount} 台已连接` : "等待连接"}
-        </Text>
-      </HStack>
-    </LiveActivityUIExpandedLeading>
-    <LiveActivityUIExpandedTrailing>
-      <HStack spacing={5}>
-        <Text font={10} foregroundStyle="rgba(255,255,255,0.50)">配对码</Text>
-        <Text font={17} fontWeight="semibold" foregroundStyle="white" monospacedDigit>{state.pairingCode}</Text>
-      </HStack>
-    </LiveActivityUIExpandedTrailing>
-    <LiveActivityUIExpandedBottom>
-      <VStack alignment="leading" spacing={4} foregroundStyle="white">
-        <ClockRow clockBase={state.clockBase} />
-        <Text font={14} monospacedDigit lineLimit={1} minScaleFactor={0.7}>{state.address}</Text>
-        {state.deviceSummary ? <Text font={11} foregroundStyle="rgba(255,255,255,0.72)" lineLimit={1}>{state.deviceSummary}</Text> : null}
-        <HStack spacing={8}>
-          <Text font={10} foregroundStyle="rgba(255,255,255,0.50)">
-            {state.networkType === "wifi" ? "Wi-Fi / 热点" : state.networkType === "cellular" ? "蜂窝网络" : "网络不可用"}
-          </Text>
-          <Spacer />
-          <Text font={11} foregroundStyle="rgba(255,255,255,0.65)" monospacedDigit>
-            发送 {state.sent} · 接收 {state.received}
-          </Text>
-        </HStack>
-      </VStack>
-    </LiveActivityUIExpandedBottom>
   </LiveActivityUI>
 )
 
