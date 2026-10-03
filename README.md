@@ -4,6 +4,7 @@
 
 ## 脚本
 
+- `BandwagonHost`：搬瓦工 VPS 流量、CPU 负载、内存、Swap 和硬盘小组件，支持点击刷新、设置引导、三种尺寸预览与亮暗主题。[下载安装包](https://github.com/llle0x/scripting/raw/refs/heads/main/BandwagonHost.scripting)。[使用说明](BandwagonHost/README.md) · [安全说明](BandwagonHost/SECURITY.md)。
 - `Codex Usage`：查看 Codex 用量。
 - `灵动岛时间`：在灵动岛显示时间。
 - `IslandSeconds`：在灵动岛以 15 号字最小显示当前秒数，支持原地重新对时。[下载安装包](https://github.com/llle0x/scripting/raw/refs/heads/main/IslandSeconds.scripting)。
