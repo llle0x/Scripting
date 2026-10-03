@@ -1,4 +1,4 @@
-# BandwagonHost — Scripting 小组件 1.1.1
+# BandwagonHost — Scripting 小组件 1.2.0
 
 只显示流量、内存、Swap、硬盘和 CPU，支持小号、中号、大号。
 
@@ -28,7 +28,7 @@ useLiveInfo=false 时不请求实时接口，内存和 CPU 的实时指标可能
 不保存密钥；通过 ownerVeid 隔离 VPS；缓存不会主动过期删除。
 流量额度和计数器同时乘 monthly_data_multiplier，无效倍率按 1。
 百分比限制 0–100；超额显示已超出。MB/GB/TB 按 1024 换算。
-点击组件通过 Scripting URL Scheme 打开本脚本，立即查询、更新共享缓存并调用 Widget.reloadAll()，随后显示设置页和刷新结果；不再跳转 KiwiVM。未配置时显示设置引导。桌面实际更新时间由 iOS 调度，默认请求 30 分钟后自动刷新。
+点击整张组件通过普通 AppIntent 在后台调用 Widget.reloadAll()，由 widget.tsx 重新查询 API、更新缓存并渲染，不打开 Scripting 设置页。需要配置时，请在 Scripting 内运行本项目。交互式组件要求 iOS 17 或更新系统及支持 AppIntent 的 Scripting 版本；实际更新时间由 iOS 调度，默认请求 30 分钟后自动刷新。
 
 项目全部使用 Scripting TS/TSX 和原生 API，包括原生 fetch；无 Node.js 依赖。
 凭据只发往 api.64clouds.com，不实现任何 VPS 写操作。
@@ -54,3 +54,5 @@ useLiveInfo=false 时不请求实时接口，内存和 CPU 的实时指标可能
 1.1.0：点击组件刷新；新增原生设置引导页、参数获取说明、CPU 设置与三种尺寸预览。
 
 1.1.1：发布前凭据检查；加入只读接口运行时白名单和缓存写入字段过滤。安全审查范围见 SECURITY.md。
+
+1.2.0：将组件点击从打开脚本改为 AppIntent 后台刷新；设置页仍通过 Scripting 内运行项目打开。

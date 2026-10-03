@@ -1,5 +1,6 @@
-import { HStack, VStack, Text, Spacer, ProgressView, Link, Script } from "scripting";
+import { HStack, VStack, Text, Spacer, ProgressView, Button } from "scripting";
 import type { DynamicShapeStyle } from "scripting";
+import { RefreshWidgetIntent } from "./app_intents";
 import { APIData, Result, Settings, calculateTraffic, calculateMemoryUsage, calculateDiskUsage, number, formatBytes, formatResetDate, daysUntilReset, formatLoad } from "./service";
 
 // 由小组件的原生环境解析颜色，支持预览主题选择和系统自动切换。
@@ -194,14 +195,17 @@ export function createWidget(config: Settings, result: Result, family: string, u
     : family === "systemSmall" ? createSmallWidget(config, result)
       : family === "systemLarge" || family === "systemExtraLarge" ? createLargeWidget(config, result)
         : createMediumWidget(config, result, size);
-  return <Link url={Script.createRunURLScheme(Script.name, { action: "refresh" })}>
+  return <Button intent={RefreshWidgetIntent(undefined)} buttonStyle="plain"
+    accessibilityLabel="刷新 VPS 数据"
+    frame={{ maxWidth: "infinity", maxHeight: "infinity" }}>
     <VStack alignment="leading" spacing={0} foregroundStyle={PRIMARY}
-      frame={{ maxWidth: "infinity", maxHeight: "infinity", alignment: "topLeading" }} widgetBackground={BACKGROUND}>
-      {/* Link 包裹的预览没有可靠的默认内容边距，显式留出安全区域。 */}
+      frame={{ maxWidth: "infinity", maxHeight: "infinity", alignment: "topLeading" }}
+      contentShape="rect" widgetBackground={BACKGROUND}>
+      {/* 整张卡片作为后台刷新按钮，显式留出圆角安全区域。 */}
       <VStack alignment="leading" spacing={0} padding={12}
         frame={{ maxWidth: "infinity", maxHeight: "infinity", alignment: "topLeading" }}>
         {content}
       </VStack>
     </VStack>
-  </Link>;
+  </Button>;
 }

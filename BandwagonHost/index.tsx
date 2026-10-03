@@ -96,7 +96,7 @@ function SettingsPage({ initialStatus }: { initialStatus: string }) {
       navigationBarTitleDisplayMode="inline"
       toolbar={{ cancellationAction: <Button title="完成" action={dismiss} disabled={busy} /> }}>
       <Section header={<Text>配置与刷新</Text>}
-        footer={<Text>点击桌面组件会打开 Scripting 并刷新数据。桌面显示的更新时间由 iOS 调度。</Text>}>
+        footer={<Text>点击桌面组件会在后台刷新，不打开设置页。设置时在 Scripting 中运行本项目；桌面更新时间由 iOS 调度。</Text>}>
         <Text>{ready ? "API 已配置 · 密钥已隐藏" : "尚未配置 API"}</Text>
         <Text>{status}</Text>
         <Button title={ready ? "修改 API 配置" : "配置 API"} systemImage="key"
@@ -135,7 +135,7 @@ function SettingsPage({ initialStatus }: { initialStatus: string }) {
 }
 
 async function main() {
-  // Widget 的链接只携带操作名；不会将 VEID 或密钥放入 URL。
+  // 兼容旧版组件的刷新链接；新版组件通过 AppIntent 后台刷新。
   const config = loadConfig();
   const status = Script.queryParameters.action === "refresh" && hasCredentials(config)
     ? await refreshData(config)
