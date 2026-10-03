@@ -5,6 +5,7 @@ import {
   LiveActivity,
   LiveActivityUI,
   LiveActivityUIBuilder,
+  LiveActivityUIExpandedBottom,
   Text,
   VStack,
 } from "scripting"
@@ -101,6 +102,10 @@ const builder: LiveActivityUIBuilder<TransferActivityState> = state => (
     compactLeading={<Seconds clockBase={state.clockBase} />}
     compactTrailing={<Text frame={{ width: 0, height: 0 }}>{""}</Text>}
     minimal={<Seconds clockBase={state.clockBase} />}>
+    {/* Scripting requires an expanded-region child even when it has no visible content. */}
+    <LiveActivityUIExpandedBottom>
+      <Text frame={{ width: 0, height: 0 }}>{""}</Text>
+    </LiveActivityUIExpandedBottom>
   </LiveActivityUI>
 )
 
