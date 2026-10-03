@@ -92,7 +92,7 @@ function SettingsPage({ initialStatus }: { initialStatus: string }) {
 
   const ready = hasCredentials(config);
   return <NavigationStack>
-    <List listStyle="insetGroup" navigationTitle="BandwagonHost"
+    <List listStyle="insetGroup" navigationTitle={Script.metadata.localizedName || "BandwagonHost"}
       navigationBarTitleDisplayMode="inline"
       toolbar={{ cancellationAction: <Button title="完成" action={dismiss} disabled={busy} /> }}>
       <Section header={<Text>配置与刷新</Text>}

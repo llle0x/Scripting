@@ -1,4 +1,4 @@
-# BandwagonHost — Scripting 小组件 1.2.0
+# BandwagonHost — Scripting 小组件 1.2.1
 
 只显示流量、内存、Swap、硬盘和 CPU，支持小号、中号、大号。
 
@@ -56,3 +56,5 @@ useLiveInfo=false 时不请求实时接口，内存和 CPU 的实时指标可能
 1.1.1：发布前凭据检查；加入只读接口运行时白名单和缓存写入字段过滤。安全审查范围见 SECURITY.md。
 
 1.2.0：将组件点击从打开脚本改为 AppIntent 后台刷新；设置页仍通过 Scripting 内运行项目打开。
+
+1.2.1：脚本卡片增加中文名称“搬瓦工监控”、蓝色配色与用量图标；内部项目名仍为 BandwagonHost，设置页使用本地化标题。

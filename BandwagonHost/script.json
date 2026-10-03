@@ -1,7 +1,15 @@
 {
   "name": "BandwagonHost",
-  "icon": "server.rack",
-  "color": "#111318",
-  "version": "1.2.0",
-  "runInApp": true
+  "icon": "chart.bar.xaxis",
+  "color": "#2563EB",
+  "version": "1.2.1",
+  "runInApp": true,
+  "localizedNames": {
+    "zh": "搬瓦工监控",
+    "en": "BWH Monitor"
+  },
+  "description": "VPS traffic and resource monitor with background widget refresh.",
+  "localizedDescriptions": {
+    "zh": "查看流量、CPU、内存、Swap 和硬盘使用情况，支持后台刷新。"
+  }
 }
