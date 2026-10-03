@@ -57,32 +57,27 @@ function connectedTitle(state: TransferActivityState): string {
   return `${state.deviceCount} 台设备已连接`
 }
 
-function connectedSummary(state: TransferActivityState): string {
-  return state.deviceCount === 0 ? state.address : state.deviceSummary
-}
-
 function StatusIcon({ online }: { online: boolean }) {
-  return <Image systemName={online ? "link.circle.fill" : "wifi"} foregroundStyle="systemBlue" />
+  return <Image systemName={online ? "link" : "wifi"} font={16}
+    frame={{ width: 20, height: 20 }} foregroundStyle="systemBlue" />
 }
 
 function LockScreenContent(state: TransferActivityState) {
   const connected = state.deviceCount > 0
   return (
-    <VStack alignment="leading" spacing={5} padding={10} activityBackgroundTint="rgba(12,16,24,0.96)" foregroundStyle="white">
-      <HStack spacing={8}>
+    <HStack spacing={9} padding={12} activityBackgroundTint="rgba(12,16,24,0.96)" foregroundStyle="white">
       <StatusIcon online={connected} />
-      <VStack alignment="leading" spacing={2} frame={{ maxWidth: Infinity }}>
-        <Text font={12} fontWeight="semibold" lineLimit={1}>{connectedTitle(state)}</Text>
-        <Text font="caption" foregroundStyle="rgba(255,255,255,0.65)" lineLimit={1}>
-          {connectedSummary(state)}
+      <VStack alignment="leading" spacing={4} frame={{ maxWidth: Infinity, alignment: "leading" }}>
+        <Text font={13} fontWeight="semibold" lineLimit={1}>{connectedTitle(state)}</Text>
+        <Text font={11} foregroundStyle="rgba(255,255,255,0.65)" lineLimit={1} minScaleFactor={0.8}>
+          {state.address}
         </Text>
       </VStack>
-      <VStack alignment="trailing" spacing={3}>
-        <Text font="caption" foregroundStyle="rgba(255,255,255,0.65)">配对码</Text>
-        <Text font={15} fontWeight="bold" monospacedDigit>{state.pairingCode}</Text>
+      <VStack alignment="trailing" spacing={3} frame={{ width: 72, alignment: "trailing" }}>
+        <Text font={10} foregroundStyle="rgba(255,255,255,0.55)">配对码</Text>
+        <Text font={17} fontWeight="semibold" monospacedDigit>{state.pairingCode}</Text>
       </VStack>
-      </HStack>
-    </VStack>
+    </HStack>
   )
 }
 
@@ -93,9 +88,9 @@ const builder: LiveActivityUIBuilder<TransferActivityState> = state => (
     compactTrailing={<Text frame={{ width: 0, height: 0 }}>{""}</Text>}
     minimal={<Seconds clockBase={state.clockBase} />}>
     <LiveActivityUIExpandedLeading>
-      <HStack spacing={6} foregroundStyle="white">
-        <Image systemName={state.deviceCount > 0 ? "link" : "wifi"} font={14} foregroundStyle="systemBlue" />
-        <Text font={14} fontWeight="semibold" lineLimit={1}>
+      <HStack spacing={5} foregroundStyle="white">
+        <Image systemName={state.deviceCount > 0 ? "link" : "wifi"} font={13} foregroundStyle="systemBlue" />
+        <Text font={13} fontWeight="semibold" lineLimit={1}>
           {state.deviceCount > 0 ? `${state.deviceCount} 台已连接` : "等待连接"}
         </Text>
       </HStack>
@@ -103,12 +98,12 @@ const builder: LiveActivityUIBuilder<TransferActivityState> = state => (
     <LiveActivityUIExpandedTrailing>
       <HStack spacing={5}>
         <Text font={10} foregroundStyle="rgba(255,255,255,0.50)">配对码</Text>
-        <Text font={17} fontWeight="semibold" foregroundStyle="white" monospacedDigit>{state.pairingCode}</Text>
+        <Text font={16} fontWeight="semibold" foregroundStyle="white" monospacedDigit>{state.pairingCode}</Text>
       </HStack>
     </LiveActivityUIExpandedTrailing>
     <LiveActivityUIExpandedBottom>
-      <VStack alignment="leading" spacing={4} foregroundStyle="white">
-        <Text font={14} monospacedDigit lineLimit={1} minScaleFactor={0.7}>{state.address}</Text>
+      <VStack alignment="leading" spacing={3} frame={{ maxWidth: Infinity, alignment: "leading" }} foregroundStyle="white">
+        <Text font={12} monospacedDigit lineLimit={1} minScaleFactor={0.8}>{state.address}</Text>
         {state.deviceSummary ? <Text font={11} foregroundStyle="rgba(255,255,255,0.72)" lineLimit={1}>
           {state.deviceSummary}{state.remainingCount > 0 ? ` · 另有 ${state.remainingCount} 台` : ""}
         </Text> : null}
