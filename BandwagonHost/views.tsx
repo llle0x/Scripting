@@ -157,40 +157,11 @@ export function createSmallWidget(config: Settings, result: Result) {
 }
 
 export function createMediumWidget(config: Settings, result: Result, _size: DisplaySize) {
-  const data = result.data || {};
-  const rows = resourceRows(data, config);
-  return <VStack alignment="leading" spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity", alignment: "topLeading" }}>
-    <Traffic data={data} compact />
-    <Spacer minLength={7} />
-    {/* 中号采用两行两列，避免四个窄列挤压单位和总量。 */}
-    <VStack spacing={7}>
-      <HStack spacing={18}>
-        <ResourceRow row={rows[0]} />
-        <ResourceRow row={rows[1]} />
-      </HStack>
-      <HStack spacing={18}>
-        <ResourceRow row={rows[2]} />
-        <ResourceRow row={rows[3]} />
-      </HStack>
-    </VStack>
-    <Footer result={result} />
-  </VStack>;
+  return <WideWidget config={config} result={result} large={false} />;
 }
 
 export function createLargeWidget(config: Settings, result: Result) {
-  const data = result.data || {};
-  const resources = resourceInfo(data, config);
-  return <VStack alignment="leading" spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity", alignment: "topLeading" }}>
-    <Traffic data={data} large />
-    <Spacer minLength={12} />
-    <VStack spacing={14}>
-      {resourceRows(data, config).map(row => <ResourceRow key={row.label} row={row} large />)}
-    </VStack>
-    <Text font={10} foregroundStyle={SECONDARY} lineLimit={1} padding={{ top: 8 }}>
-      {`CPU 1 / 5 / 15 分钟：${resources.loads || "--"}`}
-    </Text>
-    <Footer result={result} />
-  </VStack>;
+  return <WideWidget config={config} result={result} large />;
 }
 
 // 风格仅改变排版和配色，统一复用真实 API 指标及缓存处理。
@@ -251,20 +222,12 @@ function ResourceList({ config, data, large, small = false }: { config: Settings
   </VStack>;
 }
 
-function ResourceGrid({ config, data }: { config: Settings; data: APIData }) {
-  const rows = resourceRows(data, config);
-  return <VStack spacing={7}>
-    <HStack spacing={16}><ResourceRow row={rows[0]} /><ResourceRow row={rows[1]} /></HStack>
-    <HStack spacing={16}><ResourceRow row={rows[2]} /><ResourceRow row={rows[3]} /></HStack>
-  </VStack>;
-}
-
-function TrafficRing({ data, small }: { data: APIData; small: boolean }) {
+function TrafficRing({ data, small, diameter: requestedDiameter }: { data: APIData; small: boolean; diameter?: number }) {
   const traffic = trafficInfo(data);
   const value = traffic.valid ? traffic.percent : 0;
   const color = value < 70 ? CYAN : value < 90 ? ORANGE : RED;
-  const diameter = small ? 42 : 76;
-  const innerWidth = small ? 28 : 52;
+  const diameter = requestedDiameter || (small ? 42 : 76);
+  const innerWidth = diameter - 16;
   return <ZStack frame={{ width: diameter, height: diameter }}>
     <Circle stroke={{ shapeStyle: TRACK, strokeStyle: { lineWidth: 4 } }}
       frame={{ width: diameter - 6, height: diameter - 6 }} />
@@ -272,7 +235,7 @@ function TrafficRing({ data, small }: { data: APIData; small: boolean }) {
       stroke={{ shapeStyle: color, strokeStyle: { lineWidth: 4, lineCap: "round" } }}
       frame={{ width: diameter - 6, height: diameter - 6 }} rotationEffect={-90} /> : null}
     <VStack spacing={0} frame={{ width: innerWidth, alignment: "center" }}>
-      <Text font={small ? 10 : 17} fontWeight="semibold" monospacedDigit
+      <Text font={small ? 10 : diameter < 60 ? 13 : 17} fontWeight="semibold" monospacedDigit
         frame={{ width: innerWidth, alignment: "center" }}
         minScaleFactor={0.65} lineLimit={1}>
         {traffic.valid ? traffic.percent.toFixed(1) : "--"}
@@ -329,34 +292,152 @@ function StyledTraffic({ data, small, large, style }: {
   </VStack>;
 }
 
+// 中号指标分成名称、数值两行，给 GB 单位和总量留出整列宽度。
+function WideMetric({ row, data, large = false, tile = false }: {
+  row: ResourceRowData; data: APIData; large?: boolean; tile?: boolean;
+}) {
+  const ram = calculateMemoryUsage(data.plan_ram, data.mem_available_kb);
+  const swapKB = number(data.swap_total_kb);
+  const swap = calculateMemoryUsage(swapKB === null ? data.plan_swap : Math.min(swapKB * 1024, Number.MAX_SAFE_INTEGER), data.swap_available_kb);
+  const disk = calculateDiskUsage(data);
+  const metric = row.label === "内存" ? ram : row.label === "Swap" ? swap : row.label === "硬盘" ? disk : null;
+  const percent = metric && metric.usedBytes !== null && metric.totalBytes !== null && metric.totalBytes > 0
+    ? Math.min(100, Math.max(0, metric.usedBytes / metric.totalBytes * 100)) : null;
+  return <VStack alignment="leading" spacing={large ? 5 : 1}
+    padding={tile ? large ? 10 : { horizontal: 5, vertical: 2 } : 0}
+    frame={{ maxWidth: "infinity", alignment: "leading" }}
+    background={tile ? { style: TILE_BACKGROUND, shape: { type: "rect", cornerRadius: 10 } } : undefined}>
+    <Text font={large ? 11 : 8} foregroundStyle={SECONDARY}>{row.label}</Text>
+    <Text font={large ? 15 : 11} fontWeight="medium" monospacedDigit lineLimit={1}
+      minScaleFactor={0.75} frame={{ maxWidth: "infinity", alignment: "leading" }}>{row.value}</Text>
+    {large && percent !== null ? createProgressBar(percent, BLUE) : null}
+  </VStack>;
+}
+
+function WideResources({ config, data, large = false, tile = false }: {
+  config: Settings; data: APIData; large?: boolean; tile?: boolean;
+}) {
+  const rows = resourceRows(data, config);
+  if (large && !tile) return <VStack spacing={9}>
+    {rows.map(row => <VStack key={row.label} spacing={4}>
+      <ResourceRow row={row} large />
+      {row.label !== "CPU" ? <WideMetricBar label={row.label} data={data} /> : null}
+    </VStack>)}
+  </VStack>;
+  return <VStack spacing={large ? 10 : 3}>
+    <HStack spacing={large ? 14 : 12}>
+      <WideMetric row={rows[0]} data={data} large={large} tile={tile} />
+      <WideMetric row={rows[1]} data={data} large={large} tile={tile} />
+    </HStack>
+    <HStack spacing={large ? 14 : 12}>
+      <WideMetric row={rows[2]} data={data} large={large} tile={tile} />
+      <WideMetric row={rows[3]} data={data} large={large} tile={tile} />
+    </HStack>
+  </VStack>;
+}
+
+function WideMetricBar({ label, data }: { label: string; data: APIData }) {
+  const kb = number(data.swap_total_kb);
+  const metric = label === "内存" ? calculateMemoryUsage(data.plan_ram, data.mem_available_kb)
+    : label === "Swap" ? calculateMemoryUsage(kb === null ? data.plan_swap : Math.min(kb * 1024, Number.MAX_SAFE_INTEGER), data.swap_available_kb)
+      : calculateDiskUsage(data);
+  if (metric.usedBytes === null || metric.totalBytes === null || metric.totalBytes <= 0) return null;
+  return createProgressBar(Math.min(100, Math.max(0, metric.usedBytes / metric.totalBytes * 100)), BLUE);
+}
+
+function LoadDetails({ data }: { data: APIData }) {
+  const parts = (formatLoad(data.load_average) || "-- / -- / --").split(" / ");
+  return <HStack spacing={14} padding={{ top: 4 }}>
+    {["1 分钟负载", "5 分钟负载", "15 分钟负载"].map((label, index) =>
+      <VStack key={label} alignment="leading" spacing={2} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+        <Text font={9} foregroundStyle={SECONDARY}>{label}</Text>
+        <Text font={13} fontWeight="medium" monospacedDigit>{parts[index] || "--"}</Text>
+      </VStack>)}
+  </HStack>;
+}
+
+function WideTraffic({ data, style, large = false }: { data: APIData; style: string; large?: boolean }) {
+  const traffic = trafficInfo(data);
+  const color = style === "focus" ? AMBER : style === "ring" ? CYAN : style === "dashboard" ? BLUE : GREEN;
+  const title = <HStack spacing={5}>
+    <Text font={10} foregroundStyle={SECONDARY}>本月流量</Text>
+    <Spacer minLength={0} />
+    <Text font={large ? 15 : 12} fontWeight="semibold" monospacedDigit
+      foregroundStyle={traffic.exceeded ? RED : PRIMARY}>{traffic.percentLabel}</Text>
+  </HStack>;
+  const total = <Text font={large ? 13 : 11} foregroundStyle={SECONDARY}
+    lineLimit={1} minScaleFactor={0.75}>{`/ ${traffic.total}`}</Text>;
+  return <VStack alignment="leading" spacing={large ? 6 : 3}>
+    {style === "ring" ? <HStack spacing={large ? 16 : 12}>
+      <TrafficRing data={data} small={false} diameter={large ? 86 : 44} />
+      <VStack alignment="leading" spacing={2} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+        <Text font={10} foregroundStyle={SECONDARY}>本月流量</Text>
+        <Text font={large ? 30 : 23} fontWeight="semibold" monospacedDigit
+          lineLimit={1} minScaleFactor={0.75}>{traffic.used}</Text>
+        {total}
+      </VStack>
+    </HStack> : <VStack alignment="leading" spacing={large ? 5 : 2}>
+      {!(style === "dashboard" && !large) ? title : null}
+      <HStack alignment="firstTextBaseline" spacing={6}>
+        <Text font={large ? style === "focus" ? 32 : 30 : style === "focus" ? 27 : 20}
+          fontWeight="semibold" monospacedDigit lineLimit={1} minScaleFactor={0.7}>{traffic.used}</Text>
+        {style !== "focus" ? total : null}
+        {style === "dashboard" && !large ? <Spacer minLength={0} /> : null}
+        {style === "dashboard" && !large ? <Text font={11} fontWeight="semibold" monospacedDigit>
+          {traffic.percentLabel}
+        </Text> : null}
+      </HStack>
+      {style === "focus" ? total : null}
+      {createProgressBar(traffic.valid ? traffic.percent : 0, color)}
+    </VStack>}
+    {style === "focus" && !large ? <VStack alignment="leading" spacing={2}>
+      <Text font={10} foregroundStyle={traffic.exceeded ? RED : SECONDARY} lineLimit={1}>{traffic.remaining}</Text>
+      <Text font={10} foregroundStyle={SECONDARY} lineLimit={1}>{`${formatResetDate(data.data_next_reset)}重置`}</Text>
+    </VStack> : <HStack spacing={6}>
+      <Text font={10} foregroundStyle={traffic.exceeded ? RED : SECONDARY} lineLimit={1}
+        minScaleFactor={0.8}>{traffic.remaining}</Text>
+      <Spacer minLength={0} />
+      <Text font={10} foregroundStyle={SECONDARY} lineLimit={1}>
+        {`${formatResetDate(data.data_next_reset)}重置`}
+      </Text>
+    </HStack>}
+  </VStack>;
+}
+
+function WideWidget({ config, result, large }: { config: Settings; result: Result; large: boolean }) {
+  const data = result.data || {};
+  const style = normalizeWidgetStyle(config.widgetStyle);
+  return <VStack alignment="leading" spacing={large ? 6 : 3}
+    frame={{ maxWidth: "infinity", maxHeight: "infinity", alignment: "topLeading" }}>
+    {style === "focus" && !large ? <HStack alignment="top" spacing={14}>
+      <VStack alignment="leading" spacing={0} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+        <WideTraffic data={data} style={style} />
+      </VStack>
+      <VStack spacing={4} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+        {resourceRows(data, config).map(row => <WideMetric key={row.label} row={row} data={data} />)}
+      </VStack>
+    </HStack> : <VStack alignment="leading" spacing={large ? 12 : 4}>
+      <WideTraffic data={data} style={style} large={large} />
+      <WideResources config={config} data={data} large={large} tile={style === "dashboard"} />
+    </VStack>}
+    {large ? <LoadDetails data={data} /> : null}
+    <Spacer minLength={0} />
+    <Footer result={result} />
+  </VStack>;
+}
+
 function StyledWidget({ config, result, family }: { config: Settings; result: Result; family: string }) {
-  const small = family === "systemSmall";
-  const large = family === "systemLarge" || family === "systemExtraLarge";
+  if (family !== "systemSmall") return <WideWidget config={config} result={result}
+    large={family === "systemLarge" || family === "systemExtraLarge"} />;
   const style = normalizeWidgetStyle(config.widgetStyle);
   const data = result.data || {};
-  const resources = style === "dashboard" ? <ResourceTiles config={config} data={data} small={small} large={large} />
-    : small || large ? <ResourceList config={config} data={data} large={large} small={small} />
-      : <ResourceGrid config={config} data={data} />;
-  // 数字焦点中号：左右分区；小号仍纵向排列以保证数字不裁切。
-  return <VStack alignment="leading" spacing={small ? 3 : 6}
+  return <VStack alignment="leading" spacing={3}
     frame={{ maxWidth: "infinity", maxHeight: "infinity", alignment: "topLeading" }}>
-    {style === "focus" && !small && !large ? <HStack alignment="top" spacing={16}>
-      <VStack alignment="leading" spacing={4} frame={{ maxWidth: "infinity", alignment: "leading" }}>
-        <StyledTraffic data={data} small={false} large={false} style={style} />
-      </VStack>
-      <VStack spacing={8} padding={{ top: 4 }} frame={{ maxWidth: "infinity", alignment: "leading" }}>
-        <ResourceList config={config} data={data} large={false} />
-      </VStack>
-    </HStack> : <VStack alignment="leading" spacing={small ? 3 : 8}>
-      <StyledTraffic data={data} small={small} large={large} style={style} />
-      {large ? <Spacer minLength={12} /> : null}
-      {resources}
-    </VStack>}
+    <StyledTraffic data={data} small large={false} style={style} />
+    {style === "dashboard" ? <ResourceTiles config={config} data={data} small large={false} />
+      : <ResourceList config={config} data={data} large={false} small />}
     <Spacer minLength={0} />
-    {large ? <Text font={10} foregroundStyle={SECONDARY} lineLimit={1}>
-      {`CPU 1 / 5 / 15 分钟：${formatLoad(data.load_average) || "--"}`}
-    </Text> : null}
-    <Footer result={result} compact={small} />
+    <Footer result={result} compact />
   </VStack>;
 }
 
