@@ -19,8 +19,8 @@ function trafficInfo(data: APIData) {
   const used = number(data.data_counter) !== null ? formatBytes(traffic.usedBytes) : "--";
   const total = number(data.plan_monthly_data) !== null ? formatBytes(traffic.totalBytes) : "--";
   const exceeded = valid && traffic.usedBytes > traffic.totalBytes;
-  const summary = used !== "--" && total !== "--" && used.split(" ")[1] === total.split(" ")[1]
-    ? `${used.split(" ")[0]} / ${total}` : `${used} / ${total}`;
+  // 已用和总量分别保留单位，避免独立数字的含义不明确。
+  const summary = `${used} / ${total}`;
   return { ...traffic, valid, used, total, summary, exceeded,
     percentLabel: valid ? `${traffic.percent.toFixed(1)}%` : "--",
     remaining: valid ? exceeded ? `已超出 ${formatBytes(traffic.usedBytes - traffic.totalBytes)}`
@@ -30,7 +30,7 @@ function trafficInfo(data: APIData) {
 function compactUsage(used: number | null, total: number | null, disabled = false) {
   if (total === 0 && disabled) return "未启用";
   const fmt = (value: number | null) => value === null ? "--" : String(Number((value / 1024 ** 3).toFixed(2)));
-  return `${fmt(used)} / ${fmt(total)} GB`;
+  return `${fmt(used)} GB / ${fmt(total)} GB`;
 }
 
 // RAM 已用为套餐总量减可用量的估算；Swap 使用接口的总量和剩余量。
@@ -62,26 +62,21 @@ function Footer({ result, compact = false }: { result: Result; compact?: boolean
   const code = (result.error || result.warning)?.match(/API 错误 -?\d+/)?.[0];
   const message = result.cached ? `缓存数据${code ? ` · ${code}` : ""}`
     : result.warning ? code || (result.warning.includes("实时") ? "实时信息不可用" : "缓存保存失败") : "";
-  if (compact) return <HStack spacing={3} padding={{ top: 1 }}>
-    <Text font={8} foregroundStyle={SECONDARY} monospacedDigit lineLimit={1} minScaleFactor={0.8}>
-      {`更新 ${formatUpdateTime(result.timestamp)}`}
-    </Text>
-    <Spacer minLength={0} />
-    {message ? <Text font={8} foregroundStyle={ORANGE} lineLimit={1}>
-      {result.cached ? "Cached" : result.warning?.includes("实时") ? "实时缺失" : "缓存失败"}
-    </Text> : null}
-  </HStack>;
-  return <VStack spacing={2} padding={{ top: 2 }}>
-    {message ? <HStack spacing={4}>
-      <Text font={9} foregroundStyle={ORANGE} lineLimit={1}>{message}</Text>
+  return <VStack spacing={2} padding={{ top: compact ? 1 : 2 }}
+    frame={{ maxWidth: "infinity", alignment: "leading" }}>
+    {message ? <HStack spacing={3}>
+      <Text font={compact ? 8 : 9} foregroundStyle={ORANGE} lineLimit={1} minScaleFactor={0.8}>
+        {compact ? result.cached ? "缓存数据" : result.warning?.includes("实时") ? "实时缺失" : "缓存失败" : message}
+      </Text>
       <Spacer minLength={0} />
-      {result.cached ? <Text font={9} foregroundStyle={SECONDARY}>Cached</Text> : null}
+      {result.cached ? <Text font={compact ? 8 : 9} foregroundStyle={SECONDARY}>Cached</Text> : null}
     </HStack> : null}
-    <HStack spacing={4}>
-      <Text font={9} foregroundStyle={SECONDARY}>更新</Text>
+    <HStack alignment="firstTextBaseline" spacing={4}>
+      <Text font={compact ? 8 : 9} foregroundStyle={SECONDARY} lineLimit={1}>点击刷新</Text>
       <Spacer minLength={0} />
-      <Text font={9} foregroundStyle={SECONDARY} monospacedDigit lineLimit={1}>
-        {formatUpdateTime(result.timestamp)}
+      <Text font={compact ? 8 : 9} foregroundStyle={SECONDARY} monospacedDigit
+        lineLimit={1} minScaleFactor={0.75}>
+        {`更新 ${formatUpdateTime(result.timestamp)}`}
       </Text>
     </HStack>
   </VStack>;
@@ -144,7 +139,7 @@ function ResourceRow({ row, large = false }: { row: ResourceRowData; large?: boo
 
 export function createSmallWidget(config: Settings, result: Result) {
   const data = result.data || {};
-  return <VStack alignment="leading" spacing={5} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+  return <VStack alignment="leading" spacing={5} frame={{ maxWidth: "infinity", maxHeight: "infinity", alignment: "topLeading" }}>
     <VStack alignment="leading" spacing={3}>
       <Traffic data={data} small />
       <HStack spacing={4}>
@@ -156,6 +151,7 @@ export function createSmallWidget(config: Settings, result: Result) {
     <VStack spacing={3} padding={{ top: 2 }}>
       {resourceRows(data, config).map(row => <ResourceRow key={row.label} row={row} />)}
     </VStack>
+    <Spacer minLength={0} />
     <Footer result={result} compact />
   </VStack>;
 }
@@ -267,14 +263,22 @@ function TrafficRing({ data, small }: { data: APIData; small: boolean }) {
   const traffic = trafficInfo(data);
   const value = traffic.valid ? traffic.percent : 0;
   const color = value < 70 ? CYAN : value < 90 ? ORANGE : RED;
-  const diameter = small ? 38 : 74;
+  const diameter = small ? 42 : 76;
+  const innerWidth = small ? 28 : 52;
   return <ZStack frame={{ width: diameter, height: diameter }}>
-    <Circle stroke={{ shapeStyle: TRACK, strokeStyle: { lineWidth: 4 } }} padding={3} />
+    <Circle stroke={{ shapeStyle: TRACK, strokeStyle: { lineWidth: 4 } }}
+      frame={{ width: diameter - 6, height: diameter - 6 }} />
     {value > 0 ? <Circle trim={{ from: 0, to: value / 100 }}
       stroke={{ shapeStyle: color, strokeStyle: { lineWidth: 4, lineCap: "round" } }}
-      rotationEffect={-90} padding={3} /> : null}
-    <Text font={small ? 10 : 15} fontWeight="semibold" monospacedDigit
-      minScaleFactor={0.8} lineLimit={1}>{traffic.percentLabel}</Text>
+      frame={{ width: diameter - 6, height: diameter - 6 }} rotationEffect={-90} /> : null}
+    <VStack spacing={0} frame={{ width: innerWidth, alignment: "center" }}>
+      <Text font={small ? 10 : 17} fontWeight="semibold" monospacedDigit
+        frame={{ width: innerWidth, alignment: "center" }}
+        minScaleFactor={0.65} lineLimit={1}>
+        {traffic.valid ? traffic.percent.toFixed(1) : "--"}
+      </Text>
+      <Text font={small ? 7 : 10} foregroundStyle={SECONDARY}>%</Text>
+    </VStack>
   </ZStack>;
 }
 
@@ -304,12 +308,17 @@ function StyledTraffic({ data, small, large, style }: {
     </HStack> : null}
     {style === "focus" ? <VStack alignment="leading" spacing={0}>
       <HStack alignment="firstTextBaseline" spacing={4}>
-        <Text font={small ? 25 : large ? 46 : 36} fontWeight="semibold" monospacedDigit
+        <Text font={small ? 23 : large ? 42 : 30} fontWeight="semibold" monospacedDigit
           lineLimit={1} minScaleFactor={0.7}>{traffic.used === "--" ? "--" : usedParts[0]}</Text>
-        {small ? <Text font={10} foregroundStyle={SECONDARY} monospacedDigit>{traffic.percentLabel}</Text> : null}
+        {traffic.used !== "--" ? <Text font={small ? 10 : 13} foregroundStyle={SECONDARY}>
+          {usedParts[1]}
+        </Text> : null}
+        {small ? <Spacer minLength={0} /> : null}
+        {small ? <Text font={9} foregroundStyle={SECONDARY} monospacedDigit
+          lineLimit={1} minScaleFactor={0.8}>{traffic.percentLabel}</Text> : null}
       </HStack>
       <Text font={small ? 9 : 11} foregroundStyle={SECONDARY} lineLimit={1} minScaleFactor={0.8}>
-        {traffic.used === "--" ? `已用 -- / ${traffic.total}` : `${usedParts[1]} / ${traffic.total}`}
+        {`/ ${traffic.total}`}
       </Text>
     </VStack> : <Text font={small ? 17 : large ? 28 : 23} fontWeight="semibold" monospacedDigit
       lineLimit={1} minScaleFactor={0.7}>{traffic.summary}</Text>}
@@ -343,7 +352,7 @@ function StyledWidget({ config, result, family }: { config: Settings; result: Re
       {large ? <Spacer minLength={12} /> : null}
       {resources}
     </VStack>}
-    {!small ? <Spacer minLength={0} /> : null}
+    <Spacer minLength={0} />
     {large ? <Text font={10} foregroundStyle={SECONDARY} lineLimit={1}>
       {`CPU 1 / 5 / 15 分钟：${formatLoad(data.load_average) || "--"}`}
     </Text> : null}

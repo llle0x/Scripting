@@ -1,6 +1,6 @@
 # 安全说明
 
-2026-10-03，版本 1.3.0。审查范围为本目录源码及 BandwagonHost.scripting 导入包。
+2026-10-03，版本 1.3.1。审查范围为本目录源码及 BandwagonHost.scripting 导入包。
 
 - 发布版 config.ts 的 veid / apiKey 均为空，无真实凭据。配置时 API Key 使用隐藏输入，保存至 Scripting Keychain，优先读取 Keychain。
 - 仅请求 https://api.64clouds.com/v1/ 的 getServiceInfo / getLiveServiceInfo；运行时白名单拒绝其他接口。请求 10 秒超时，禁止跟随重定向。无重启、停止、重装等操作。
