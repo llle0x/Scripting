@@ -1,6 +1,6 @@
 # 安全说明
 
-2026-10-03，版本 1.2.1。审查范围为本目录源码及 BandwagonHost.scripting 导入包。
+2026-10-03，版本 1.3.0。审查范围为本目录源码及 BandwagonHost.scripting 导入包。
 
 - 发布版 config.ts 的 veid / apiKey 均为空，无真实凭据。配置时 API Key 使用隐藏输入，保存至 Scripting Keychain，优先读取 Keychain。
 - 仅请求 https://api.64clouds.com/v1/ 的 getServiceInfo / getLiveServiceInfo；运行时白名单拒绝其他接口。请求 10 秒超时，禁止跟随重定向。无重启、停止、重装等操作。
@@ -18,3 +18,5 @@ Scripting 平台的网络检查器可能记录请求 URL；本项目无法控制
 ## 验证边界
 
 已执行源码与导入包凭据扫描、严格 TypeScript 检查和模拟请求 / 缓存 / 错误处理测试。这是有限范围的代码审查，不是对 iOS Keychain、宿主 App 或搬瓦工服务的安全认证。审查不读取用户手机中的实际密钥。
+
+风格选择为本机 Keychain 的 BWH_WIDGET_STYLE（非敏感设置），仅保存预定义风格 ID；读取时按白名单验证，无效值回退极简列表。

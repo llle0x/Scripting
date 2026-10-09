@@ -1,5 +1,6 @@
 import { fetch } from "scripting";
 import { CONFIG, DEBUG } from "./config";
+import { normalizeWidgetStyle } from "./styles";
 
 export type APIData = Record<string, unknown>;
 export type Settings = typeof CONFIG;
@@ -58,6 +59,7 @@ export function loadConfig(): Settings {
     veid: readCredential("BWH_VEID") || text(CONFIG.veid),
     apiKey: readCredential("BWH_API_KEY") || text(CONFIG.apiKey),
     cpuCores: number(readCredential("BWH_CPU_CORES")) || number(CONFIG.cpuCores) || 0,
+    widgetStyle: normalizeWidgetStyle(readCredential("BWH_WIDGET_STYLE") || CONFIG.widgetStyle),
     name: text(CONFIG.name) || "BandwagonHost",
     refreshMinutes: minutes && minutes > 0 ? Math.min(minutes, 10080) : 30,
   };

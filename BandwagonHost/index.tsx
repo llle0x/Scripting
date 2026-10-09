@@ -1,4 +1,5 @@
 import { Script, Widget, Navigation, NavigationStack, List, Section, Button, Link, Text, useState } from "scripting";
+import { WIDGET_STYLES, widgetStyleName } from "./styles";
 import { loadConfig, hasCredentials, loadData, Settings } from "./service";
 
 export async function setupCredentials(config: Settings): Promise<boolean> {
@@ -90,6 +91,23 @@ function SettingsPage({ initialStatus }: { initialStatus: string }) {
     setStatus(`CPU 总核心数已保存：${cores} 核`);
   }
 
+  async function configureStyle() {
+    const choice = await Dialog.actionSheet({ title: "小组件风格",
+      actions: WIDGET_STYLES.map(style => ({
+        label: `${style.id === config.widgetStyle ? "✓ " : ""}${style.name}`,
+      })),
+    });
+    if (choice === null || !WIDGET_STYLES[choice]) return;
+    const selected = WIDGET_STYLES[choice];
+    if (!Keychain.set("BWH_WIDGET_STYLE", selected.id)) {
+      setStatus("风格保存失败，请解锁设备后重试。");
+      return;
+    }
+    setConfig(loadConfig());
+    Widget.reloadAll();
+    setStatus(`已切换：${selected.name}`);
+  }
+
   const ready = hasCredentials(config);
   return <NavigationStack>
     <List listStyle="insetGroup" navigationTitle={Script.metadata.localizedName || "BandwagonHost"}
@@ -117,6 +135,11 @@ function SettingsPage({ initialStatus }: { initialStatus: string }) {
         <Text>3. 在同一页面点击 Show API Key，复制 API Key，回到本页点击“配置 API”。</Text>
         <Link url="https://kiwivm.64clouds.com/"><Text>打开 KiwiVM 面板</Text></Link>
         <Text>4. CPU 核数填写套餐的 vCPU 数量；也可登录 VPS，通过 SSH 执行 nproc。当前设置见上方“CPU 核心数”，可随时修改。</Text>
+      </Section>
+      <Section header={<Text>小组件风格</Text>}
+        footer={<Text>选择会保存在本机，并应用到小、中、大三种尺寸。下方预览展示当前风格。</Text>}>
+        <Button title={`当前风格 · ${widgetStyleName(config.widgetStyle)}`} systemImage="paintpalette"
+          action={() => { void perform(configureStyle); }} disabled={busy} />
       </Section>
       <Section header={<Text>组件预览</Text>}
         footer={<Text>在预览页面切换亮色 / 深色主题。预览为 App 内效果，桌面布局以实际小组件为准。</Text>}>

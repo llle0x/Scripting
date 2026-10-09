@@ -4,6 +4,7 @@ export const CONFIG = {
   apiKey: "",
   name: "BandwagonHost",
   refreshMinutes: 30,
+  widgetStyle: "minimal", // 可在设置页切换四种风格。
   useLiveInfo: true,
   cpuCores: 2, // 默认 2 个 vCPU；请在设置页填写自己 VPS 的核数。
 };
