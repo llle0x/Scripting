@@ -2,7 +2,7 @@
   "name": "BandwagonHost",
   "icon": "chart.bar.xaxis",
   "color": "#2563EB",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "runInApp": true,
   "localizedNames": {
     "zh": "搬瓦工监控",

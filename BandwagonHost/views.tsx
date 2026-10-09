@@ -1,7 +1,7 @@
 import { HStack, VStack, Text, Spacer, ProgressView, Button } from "scripting";
 import type { DynamicShapeStyle } from "scripting";
 import { RefreshWidgetIntent } from "./app_intents";
-import { APIData, Result, Settings, calculateTraffic, calculateMemoryUsage, calculateDiskUsage, number, formatBytes, formatResetDate, daysUntilReset, formatLoad } from "./service";
+import { APIData, Result, Settings, calculateTraffic, calculateMemoryUsage, calculateDiskUsage, number, formatBytes, formatResetDate, daysUntilReset, formatUpdateTime, formatLoad } from "./service";
 
 // 由小组件的原生环境解析颜色，支持预览主题选择和系统自动切换。
 const BACKGROUND: DynamicShapeStyle = { light: "#F6F7F9", dark: "#111318" };
@@ -58,15 +58,23 @@ export function createProgressBar(percent: number) {
 }
 
 function Footer({ result }: { result: Result }) {
-  if (!result.cached && !result.warning) return null;
   const code = (result.error || result.warning)?.match(/API 错误 -?\d+/)?.[0];
   const message = result.cached ? `缓存数据${code ? ` · ${code}` : ""}`
-    : code || (result.warning?.includes("实时") ? "实时信息不可用" : "缓存保存失败");
-  return <HStack spacing={4} padding={{ top: 2 }}>
-    <Text font={9} foregroundStyle={ORANGE} lineLimit={1}>{message}</Text>
-    <Spacer minLength={0} />
-    {result.cached ? <Text font={9} foregroundStyle={SECONDARY}>Cached</Text> : null}
-  </HStack>;
+    : result.warning ? code || (result.warning.includes("实时") ? "实时信息不可用" : "缓存保存失败") : "";
+  return <VStack spacing={2} padding={{ top: 2 }}>
+    {message ? <HStack spacing={4}>
+      <Text font={9} foregroundStyle={ORANGE} lineLimit={1}>{message}</Text>
+      <Spacer minLength={0} />
+      {result.cached ? <Text font={9} foregroundStyle={SECONDARY}>Cached</Text> : null}
+    </HStack> : null}
+    <HStack spacing={4}>
+      <Text font={9} foregroundStyle={SECONDARY}>更新</Text>
+      <Spacer minLength={0} />
+      <Text font={9} foregroundStyle={SECONDARY} monospacedDigit lineLimit={1}>
+        {formatUpdateTime(result.timestamp)}
+      </Text>
+    </HStack>
+  </VStack>;
 }
 
 function Traffic({ data, small = false, large = false, compact = false }: {

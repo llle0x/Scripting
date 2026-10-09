@@ -284,3 +284,16 @@ export function calculateDiskUsage(data: APIData) {
   const usedBytes = number(data.ve_used_disk_space_b);
   return { usedBytes, totalBytes };
 }
+
+// 使用成功查询的时间戳；缓存回退不会把失败时间伪装成更新时间。
+export function formatUpdateTime(timestamp: unknown, now = Date.now()): string {
+  const n = number(timestamp);
+  if (n === null || n <= 0) return "--";
+  const date = new Date(n);
+  if (!Number.isFinite(date.getTime())) return "--";
+  const today = new Date(now);
+  const time = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  const sameDay = date.getFullYear() === today.getFullYear()
+    && date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
+  return sameDay ? time : `${date.getMonth() + 1}/${date.getDate()} ${time}`;
+}
